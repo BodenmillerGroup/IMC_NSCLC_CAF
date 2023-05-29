@@ -1,0 +1,111 @@
+---
+title: "R Notebook - merge all single cell objects"
+output: html_notebook
+---
+
+```{r, Set wd}
+#set working directory 
+wd <-"/mnt"
+
+data_folder <-(file.path(wd,"lena_processed2","NSCLC_NEW","sce_objects","RAW"))
+
+sce_86_A <- readRDS(file=file.path(data_folder, "sce_86_A_2022.rds"))
+sce_86_B <- readRDS(file=file.path(data_folder, "sce_86_B_2022.rds"))
+sce_86_C <- readRDS(file=file.path(data_folder, "sce_86_C_2022.rds"))
+
+sce_87_A <- readRDS(file=file.path(data_folder, "sce_87_A_2022.rds"))
+sce_87_B <- readRDS(file=file.path(data_folder, "sce_87_B_2022.rds"))
+sce_87_C <- readRDS(file=file.path(data_folder, "sce_87_C_2022.rds"))
+
+sce_88_A <- readRDS(file=file.path(data_folder, "sce_88_A_2022.rds"))
+sce_88_B <- readRDS(file=file.path(data_folder, "sce_88_B_2022.rds"))
+sce_88_C <- readRDS(file=file.path(data_folder, "sce_88_C_2022.rds"))
+
+sce_175_A <- readRDS(file=file.path(data_folder, "sce_175_A_2022.rds"))
+sce_175_B <- readRDS(file=file.path(data_folder, "sce_175_B_2022.rds"))
+sce_175_C <- readRDS(file=file.path(data_folder, "sce_175_C_2022.rds"))
+
+sce_176_A <- readRDS(file=file.path(data_folder, "sce_176_A_2022.rds"))
+sce_176_B <- readRDS(file=file.path(data_folder, "sce_176_B_2022.rds"))
+sce_176_C <- readRDS(file=file.path(data_folder, "sce_176_C_2022.rds"))
+
+sce_178_A <- readRDS(file=file.path(data_folder, "sce_178_A_2022.rds"))
+sce_178_B <- readRDS(file=file.path(data_folder, "sce_178_B_2022.rds"))
+sce_178_C <- readRDS(file=file.path(data_folder, "sce_178_C_2022.rds"))
+```
+
+```{r}
+tma86 <-cbind(sce_86_A,sce_86_B,sce_86_C)
+saveRDS(tma86,file=file.path(data_folder,"merge_86_sces.rds"))
+rm(sce_86_A,sce_86_B,sce_86_C)
+
+tma87 <-cbind(sce_87_A,sce_87_B,sce_87_C)
+saveRDS(tma87,file=file.path(data_folder,"merge_87_sces.rds"))
+rm(sce_87_A,sce_87_B,sce_87_C)
+
+tma88 <-cbind(sce_88_A,sce_88_B,sce_88_C)
+saveRDS(tma88,file=file.path(data_folder,"merge_88_sces.rds"))
+rm(sce_88_A,sce_88_B,sce_88_C)
+
+tma175 <-cbind(sce_175_A,sce_175_B,sce_175_C)
+saveRDS(tma175,file=file.path(data_folder,"merge_175_sces.rds"))
+rm(sce_175_A,sce_175_B,sce_175_C)
+
+tma176 <-cbind(sce_176_A,sce_176_B,sce_176_C)
+saveRDS(tma176,file=file.path(data_folder,"merge_176_sces.rds"))
+rm(sce_176_A,sce_176_B,sce_176_C)
+
+tma178 <-cbind(sce_178_A,sce_178_B,sce_178_C)
+saveRDS(tma178,file=file.path(data_folder,"merge_178_sces.rds"))
+rm(sce_178_A,sce_178_B,sce_178_C)
+```
+
+```{r}
+tma80s <- cbind(tma86, tma87, tma88)
+saveRDS(tma80s,file=file.path(data_folder,"merge_80s_sces_RAW.rds"))
+rm(tma86, tma87, tma88)
+
+tma170s <- cbind(tma175, tma176, tma178)
+saveRDS(tma170s,file=file.path(data_folder,"merge_170s_sces_RAW.rds"))
+rm(tma175, tma176, tma178)
+
+tma_all <- cbind(tma80s, tma170s)
+saveRDS(tma_all, file=file.path(data_folder, "merge_all_TMAs_sce_RAW.rds"))
+```
+
+
+
+
+
+#Add clinical data to counts data
+
+```{r, Set wd}
+#set working directory 
+wd <-"/mnt"
+
+data_folder <-(file.path(wd,"lena_processed2","NSCLC_NEW","sce_objects","counts"))
+
+sce_86_A <- readRDS(file=file.path(data_folder, "sce_86_A_counts_RAW.rds"))
+sce_86_B <- readRDS(file=file.path(data_folder, "sce_86_B_counts_RAW.rds"))
+sce_86_C <- readRDS(file=file.path(data_folder, "sce_86_C_counts_RAW.rds"))
+
+sce_87_A <- readRDS(file=file.path(data_folder, "sce_87_A_counts_RAW.rds"))
+sce_87_B <- readRDS(file=file.path(data_folder, "sce_87_B_counts_RAW.rds"))
+sce_87_C <- readRDS(file=file.path(data_folder, "sce_87_C_counts_RAW.rds"))
+
+sce_88_A <- readRDS(file=file.path(data_folder, "sce_88_A_counts_RAW.rds"))
+sce_88_B <- readRDS(file=file.path(data_folder, "sce_88_B_counts_RAW.rds"))
+sce_88_C <- readRDS(file=file.path(data_folder, "sce_88_C_counts_RAW.rds"))
+
+sce_175_A <- readRDS(file=file.path(data_folder, "sce_175_A_counts_RAW.rds"))
+sce_175_B <- readRDS(file=file.path(data_folder, "sce_175_B_counts_RAW.rds"))
+sce_175_C <- readRDS(file=file.path(data_folder, "sce_175_C_counts_RAW.rds"))
+
+sce_176_A <- readRDS(file=file.path(data_folder, "sce_176_A_counts_RAW.rds"))
+sce_176_B <- readRDS(file=file.path(data_folder, "sce_176_B_counts_RAW.rds"))
+sce_176_C <- readRDS(file=file.path(data_folder, "sce_176_C_counts_RAW.rds"))
+
+sce_178_A <- readRDS(file=file.path(data_folder, "sce_178_A_counts_RAW.rds"))
+sce_178_B <- readRDS(file=file.path(data_folder, "sce_178_B_counts_RAW.rds"))
+sce_178_C <- readRDS(file=file.path(data_folder, "sce_178_C_counts_RAW.rds"))
+```

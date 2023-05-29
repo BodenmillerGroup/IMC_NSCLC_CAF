@@ -1,0 +1,2035 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r, import libraries}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(stringr)
+library(DT)
+
+library(dplyr)
+library(tidyr)
+library(mclust)
+library(ggplot2)
+library(RColorBrewer)
+library(scater)
+library(Rphenoannoy)
+set.seed(101100)
+```
+
+```{r}
+wd <- dirname(getwd())
+
+#Set working directory and folder structure
+data_folder <-(file.path(wd,"sce_objects","final objects with categories","FINAL"))
+
+#set plot folder for results
+plot_folder <-(file.path(wd,"plots"))
+
+```
+
+Define clinical data
+```{r clinical data, message=FALSE, warning=FALSE, echo=FALSE}
+clinical.data <- read.csv(file=file.path(wd,"sce_objects","clinical_data", "clinical_data_ROI_ac_combined_CORRECT.csv"))
+
+clinical.data = clinical.data[!duplicated(clinical.data$Patient_ID),]
+clinical.data$X <-NULL
+clinical.data$X.1 <-NULL
+head(clinical.data)
+```
+
+```{r}
+all.sce
+sce <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/FINAL_All_Clustered_FILTERED_inc_tumour_vessel_immune_CAF_minusOther.rds")
+
+other.sce <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/OTHER_CLINICAL-DATA_FILTERED.rds")
+
+colnames(colData(sce))[!colnames(colData(sce))%in% colnames(colData(other.sce))]
+colnames(colData(other.sce))[!colnames(colData(other.sce))%in% colnames(colData(sce))]
+colnames(colData(other.sce))[!colnames(colData(sce))%in% colnames(colData(other.sce))]
+colnames(colData(other.sce))[!colnames(colData(other.sce))%in% colnames(colData(sce))]
+colnames(colData(sce))[!colnames(colData(sce))%in% colnames(colData(other.sce))]
+
+
+all.sce <- cbind(sce, other.sce)
+saveRDS(all.sce, file=file.path(data_folder, "FINAL_All_Clustered_FILTERED_inc_tumour_vessel_immune_CAF_Other_new.rds"))
+all.sce <- readRDS(file=file.path(data_folder, "FINAL_All_Clustered_FILTERED_inc_tumour_vessel_immune_CAF_Other_new.rds"))
+table(all.sce$cell_category)
+
+df <- colData(all.sce) %>% data.frame
+df <-df[!duplicated(df[,"RoiID"]),]
+df_pat <-df %>% count(Patient_ID)
+
+table(df_pat$n) %>% prop.table()*100
+df_pat[df_pat$n ==2,]
+df_pat[df_pat$n ==91,]
+
+all.sce$tumour_stroma <- ifelse(all.sce$Compartment <0, "Stroma","Tumour")
+df_t <-table(all.sce$cell_category, all.sce$tumour_stroma)
+write.csv(df_t,file=file.path(plot_folder,"table_cellcategory_tumour-stroma-mask.csv"))
+
+df_t <-table(all.sce$cell_category, all.sce$tumour_stroma)%>% prop.table(margin=1)*100
+write.csv(df_t,file=file.path(plot_folder,"table_cellcategory_tumour-stroma-mask_percent.csv"))
+
+
+df <- colData(all.sce) %>% data.frame
+df$Distance <- df$Compartment
+df$Distance[df$Compartment <= (-150)] <-"(-150)"
+df$Distance[df$Compartment > (-150) & df$Compartment <= (-120)] <-"-150 to -120"
+df$Distance[df$Compartment > (-120) & df$Compartment <= (-90)] <-"-120 to -90"
+df$Distance[df$Compartment > (-90) & df$Compartment <= (-60)] <-"-90 to -60"
+df$Distance[df$Compartment > (-60) & df$Compartment <= (-10)] <-"-60 to 10"
+df$Distance[df$Compartment > (-10) & df$Compartment <= (0)] <-"-10 to -0"
+df$Distance[df$Compartment > (0)] <-"(>0)"
+df_t <-table(df$Distance, df$cell_category)
+write.csv(df_t,file=file.path(plot_folder,"table_cellcategory_bins10px.csv"))
+```
+
+
+```{r, Define stroma markers, echo=F, warning=F, message=FALSE}
+all.marker <-rownames(all.sce)
+#all.marker <-rownames(all.sce.sub)
+
+bad.marker <- c("Iridium_191","Iridium_193","Cadherin-6","Histone H3") 
+good.marker <- all.marker[!all.marker %in% bad.marker]
+print(good.marker)
+```
+
+
+```{r, echo=F, warning=F, message=FALSE}
+unique(all.sce$cell_subtype)
+all.sce$cell_subtype[all.sce$cell_subtype=="other"] <-"Other"
+
+all.sce$cell_subtype[all.sce$cell_subtype=="iCAF_CD248"|all.sce$cell_subtype=="iCAF_CD34"] <-"iCAF"
+all.sce$cell_subtype[all.sce$cell_subtype=="tpCAF_CD10"|all.sce$cell_subtype=="tpCAF_CD73"] <-"tpCAF"
+all.sce$cell_subtype[all.sce$cell_subtype=="mCAF_MMP11"|all.sce$cell_subtype=="mCAF_Col_Cdh"] <-"mCAF"
+all.sce$cell_subtype[all.sce$cell_subtype=="other"] <-"Other"
+
+all.sce$cell_category %>% unique
+all.sce$cell_subtype %>% unique
+all.sce$immune_category
+
+all.sce$immune_category <-all.sce$cell_category
+all.sce$immune_category[all.sce$cell_category=="T cell"] <-"Immune"
+all.sce$immune_category %>% unique
+```
+
+
+```{r, subset stroma}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(all.sce)), all.sce$Tma_ac)
+length(unique(all.sce$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+all.sce.sub <- all.sce[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(all.sce.sub))[2]/dim(assay(all.sce))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  all.sce.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(all.sce.sub, file=file.path(data_folder, paste("all_merged_filtered_inclOther_SUB.rds")))
+```
+
+```{r, load subset, message=FALSE, warning=FALSE, echo=FALSE}
+all.sce.sub <-readRDS( file=file.path(data_folder, paste("all_merged_filtered_inclOther_SUB.rds")))
+#test <- readRDS(file=file.path(data_folder, paste("all_clustered_SUB.rds")))
+```
+
+```{r}
+all.sce.sub$cell_category %>% unique
+all.sce.sub$cell_subtype %>% unique
+all.sce.sub$cell_subtype[all.sce.sub$cell_subtype=="other"] <- "Other"
+
+
+```
+
+```{r, calculate umap, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,50,100)
+p=50
+for(i in p){
+all.sce.sub <- runUMAP(all.sce.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(all.sce.sub, file=file.path(data_folder, paste("all_merged_filtered_inclOther_SUB.rds")))
+
+}
+saveRDS(all.sce.sub, file=file.path(data_folder, paste("all_merged_filtered_inclOther_SUB.rds")))
+
+
+for(i in p){
+all.sce.sub <- runTSNE(all.sce.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("tSNE_p", i),
+                 #use_dimred="PCA_20",
+                 perplexity = i)
+saveRDS(all.sce.sub, file=file.path(data_folder, paste("all_merged_filtered_inclOther_SUB.rds")))
+}
+```
+
+
+**UMAP with good markers**
+```{r,plot umap tumour marker, fig.width=16, fig.height=10, echo=F, message=FALSE,warning=FALSE}
+dat <-as.data.frame(reducedDims(all.sce.sub)$`UMAP_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.sce.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% good.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+ggsave(filename=file.path(plot_folder, paste("NEW_UMAP_good_marker_2.png",sep="")), plot=p, width=12, height=10)
+
+```
+**tsne with good markers**
+```{r,plot tsne good marker, fig.width=16, fig.height=12, echo=F, message=FALSE,warning=FALSE}
+dat <-as.data.frame(reducedDims(all.sce.sub)$`tSNE_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.sce.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% good.marker], names_to = "target", values_to = "counts")
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) == "CD20"], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=10)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+#ggsave(filename=file.path(plot_folder, paste("NEW_tSNE_all-clustered_good-markers_6col.png",sep="")), plot=p, width=16, height=16)
+ggsave(filename=file.path(plot_folder, paste("NEW_tSNE_all-clustered_good-markers_6col_scale.pdf",sep="")), plot=p, width=16, height=16)
+
+```
+
+```{r plot types on umap}
+cluster <- "cell_category"
+plotReducedDim(all.sce.sub, "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster), point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="Cell Category") #,text_colour ="red"
+
+all.sce.sub$immune_category <-all.sce.sub$cell_category
+all.sce.sub$immune_category[all.sce.sub$cell_category=="T cell"] <-"Immune"
+
+cluster <- "immune_category"
+plotReducedDim(all.sce.sub, "UMAP_p50", colour_by=paste(cluster), point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2")+scale_color_tableau()
+
+cluster <- "cell_type"
+plotReducedDim(all.sce.sub, "UMAP_p50", colour_by=paste(cluster), point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2")+scale_color_tableau()
+
+```
+
+```{r plot types on tsne}
+cluster <- "cell_category"
+plotReducedDim(all.sce.sub, "tSNE_p50", colour_by=paste(cluster), text_by = paste(cluster), point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2", title="Cell Category")+scale_fill_tableau("Tableau 20") #,text_colour ="red"
+
+cluster <- "cell_type"
+plotReducedDim(all.sce.sub, "tSNE_p50", colour_by=paste(cluster), point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2")+scale_color_igv()
+
+all.sce.sub$immune_category <-all.sce.sub$cell_category
+all.sce.sub$immune_category[all.sce.sub$cell_category=="T cell"] <-"Immune"
+
+#save this
+cluster <- "immune_category"
+p <-plotReducedDim(all.sce.sub, "tSNE_p50", colour_by=paste(cluster), point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2")+scale_color_tableau()
+p <-p+scale_color_manual(values=c("#4E79A7","#E15759","#59A14F","#76B7B2","#F28E2B"))
+ggsave(filename=file.path(plot_folder, paste("NEW_tSNE_all-clustered_cell_category.png",sep="")), plot=p, width=9, height=6)
+
+library(pals)
+cluster <- "cell_subtype"
+p <-plotReducedDim(all.sce.sub, "tSNE_p50", colour_by=paste(cluster), point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2")+scale_color_tableau()+scale_color_manual(values=as.vector(glasbey(31)))
+plot(p)
+ggsave(filename=file.path(plot_folder, paste("tSNE_all-clustered_cell_subtype.png",sep="")), plot=p, width=9, height=6)
+```
+
+```{r plot hm, fig.width=15, fig.height=20}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+agg_sce <-aggregateAcrossCells(all.sce, ids=all.sce$cell_subtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+  #plot Heatmap from scater
+ scater::plotHeatmap(agg_sce,
+              #features = fibro.marker,
+              features=good.marker,
+              exprs_values = "c_counts_asinh_scaled",
+              #symmetric = FALSE,
+              zlim=c(-0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c("cell_subtype","immune_category" ))
+  #plot Heatmap from scater
+  scater::plotHeatmap(agg_sce,
+              features = good.marker,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              colour_columns_by = cluster,
+              width=15, height=15,
+              filename=file.path(plot_folder, paste0("HM_Rpheno_all",cluster,"_RPA.pdf")))
+  
+```
+
+
+```{r, fig.width=15, fig.height=15}
+library(circlize)
+col_fun = colorRamp2(c(0, 0.5, 1), c("blue", "white", "red"))
+col_fun = colorRamp2(c(seq(from=0, to=1, by=0.1)), c("#313695" ,"#4575B4" ,"#74ADD1" ,"#ABD9E9", "#E0F3F8", "#FFFFBF", "#FEE090", "#FDAE61", "#F46D43" ,"#D73027", "#A50026"))
+
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+lgd = Legend(col_fun = col_fun, title = "foo")
+rdylbu
+agg_sce <-aggregateAcrossCells(all.sce, ids=all.sce$cell_subtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+all.sce$DX.name[is.na(all.sce$DX.name)] <- "NA"
+
+agg_sce <-aggregateAcrossCells(all.sce[, all.sce$DX.name=="Adenocarcinoma"|
+                                         all.sce$DX.name=="Squamous cell carcinoma"], ids=all.sce$cell_subtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+agg_sce <- agg_sce[rownames(agg_sce) %in% good.marker,]
+
+hm.genes <- rownames(agg_sce)
+
+hm.val <- assay(agg_sce,"c_counts_asinh_scaled")[hm.genes,]
+
+#Type
+n.cells <-as.data.frame(table(all.sce[, all.sce$DX.name=="Adenocarcinoma"|
+                                         all.sce$DX.name=="Squamous cell carcinoma"]$cell_subtype,
+                              all.sce[, all.sce$DX.name=="Adenocarcinoma"|
+                                         all.sce$DX.name=="Squamous cell carcinoma"]$DX.name))
+n.cells <-n.cells %>% pivot_wider(names_from = Var2, values_from="Freq")
+names(n.cells)[names(n.cells) == 'Var1'] <- 'Celltype'
+n.cells
+n.cells$Frequency <- rowSums(n.cells[2:3])
+#colnames(n.cells) <-c("ids","Frequency")
+df <-data.frame("Cellcategory"=all.sce$immune_category, "Celltype"=all.sce$cell_subtype) %>% unique
+n.cells <-left_join(n.cells, df, by="Celltype")
+col.pal = list(Celltype = as.vector(glasbey(30)), Cellcategory= palette("Tableau 10")[1:5])
+
+names(col.pal$Cellcategory) <- unique(all.sce$immune_category)
+names(col.pal$Celltype) <- unique(all.sce$cell_subtype)
+
+#no cluster colour
+col.pal <-list(Type= as.vector(glasbey(30)))
+
+names(col.pal$Type) <- unique(all.sce$immune_category)
+names(col.pal$Cluster) <- unique(all.sce$cell_subtype)
+
+col.pal
+
+#cell type
+p<-Heatmap(hm.val, name="Cluster", col=col_fun,clustering_method_rows = "ward.D2",clustering_method_columns = "ward.D2",top_annotation = HeatmapAnnotation(Frequency=anno_barplot(n.cells$Frequency), col=col.pal,Type=n.cells$Type, Cluster=n.cells$ids)) #,col=col.pal
+draw(p)
+
+p<-Heatmap(hm.val, name=" ",
+           col=col_fun,
+           clustering_method_rows = "ward.D2",
+           clustering_method_columns = "ward.D2",
+           top_annotation = HeatmapAnnotation(Cellnumber = anno_barplot(cbind(sqrt(n.cells$Adenocarcinoma), sqrt(n.cells$`Squamous cell carcinoma`)),
+                                                                 gp = gpar(fill = c("black","grey"), col = c("black","grey")),
+                                                                 height = unit(2, "cm")),
+                                              col=col.pal,
+                                              Cellcategory=n.cells$Cellcategory,
+                                              Celltype=n.cells$Celltype)) #,col=col.pal
+draw(p)
+
+#Save complex heatmap as pdf
+pdf(file=file.path(plot_folder, paste("C_HM_all-cells-freq_sqrt_2cmbar.pdf")), width=15, height=15)
+draw(p)
+dev.off()
+```
+
+
+#clean
+```{r, fig.width=15, fig.height=15}
+library(circlize)
+col_fun = colorRamp2(c(0, 0.5, 1), c("blue", "white", "red"))
+col_fun = colorRamp2(c(seq(from=0, to=1, by=0.1)), c("#313695" ,"#4575B4" ,"#74ADD1" ,"#ABD9E9", "#E0F3F8", "#FFFFBF", "#FEE090", "#FDAE61", "#F46D43" ,"#D73027", "#A50026"))
+
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+lgd = Legend(col_fun = col_fun, title = "foo")
+rdylbu
+agg_sce <-aggregateAcrossCells(all.sce, ids=all.sce$cell_subtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+all.sce$DX.name[is.na(all.sce$DX.name)] <- "NA"
+
+agg_sce <-aggregateAcrossCells(all.sce[, all.sce$DX.name=="Adenocarcinoma"|
+                                         all.sce$DX.name=="Squamous cell carcinoma"], ids=all.sce$cell_subtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+agg_sce <- agg_sce[rownames(agg_sce) %in% good.marker,]
+
+hm.genes <- rownames(agg_sce)
+
+hm.val <- assay(agg_sce,"c_counts_asinh_scaled")[hm.genes,]
+
+#Type
+n.cells <-as.data.frame(table(all.sce[, all.sce$DX.name=="Adenocarcinoma"|
+                                         all.sce$DX.name=="Squamous cell carcinoma"]$cell_subtype,
+                              all.sce[, all.sce$DX.name=="Adenocarcinoma"|
+                                         all.sce$DX.name=="Squamous cell carcinoma"]$DX.name))
+n.cells <-n.cells %>% pivot_wider(names_from = Var2, values_from="Freq")
+names(n.cells)[names(n.cells) == 'Var1'] <- 'Celltype'
+n.cells
+n.cells$Frequency <- rowSums(n.cells[2:3])
+#colnames(n.cells) <-c("ids","Frequency")
+df <-data.frame("Cellcategory"=all.sce$immune_category, "Celltype"=all.sce$cell_subtype) %>% unique
+n.cells <-left_join(n.cells, df, by="Celltype")
+col.pal = list(Celltype = as.vector(glasbey(30)), Cellcategory= palette("Tableau 10")[1:5])
+
+names(col.pal$Cellcategory) <- unique(all.sce$immune_category)
+names(col.pal$Celltype) <- unique(all.sce$cell_subtype)
+
+#no cluster colour
+col.pal <-list(Type= as.vector(glasbey(30)))
+
+names(col.pal$Type) <- unique(all.sce$immune_category)
+names(col.pal$Cluster) <- unique(all.sce$cell_subtype)
+
+col.pal
+
+#cell type
+p<-Heatmap(hm.val, name="Cluster", col=col_fun,clustering_method_rows = "ward.D2",clustering_method_columns = "ward.D2",top_annotation = HeatmapAnnotation(Frequency=anno_barplot(n.cells$Frequency), col=col.pal,Type=n.cells$Type, Cluster=n.cells$ids)) #,col=col.pal
+draw(p)
+
+p<-Heatmap(hm.val, name=" ",
+           col=col_fun,
+           clustering_method_rows = "ward.D2",
+           clustering_method_columns = "ward.D2",
+           top_annotation = HeatmapAnnotation(Cellnumber = anno_barplot(cbind(sqrt(n.cells$Adenocarcinoma), sqrt(n.cells$`Squamous cell carcinoma`)),
+                                                                 gp = gpar(fill = c("black","grey"), col = c("black","grey")),
+                                                                 height = unit(2, "cm")),
+                                              col=col.pal,
+                                              Cellcategory=n.cells$Cellcategory,
+                                              Celltype=n.cells$Celltype)) #,col=col.pal
+draw(p)
+
+#Save complex heatmap as pdf
+#pdf(file=file.path(plot_folder, paste("C_HM_all-cells-freq_sqrt_2cmbar.pdf")), width=15, height=15)
+#draw(p)
+#dev.off()
+```
+#Immune cells
+
+```{r plots, fig.width=15, fig.height=10}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+immune.marker <-c("Myeloperoxidase (MPO)" ,"HLA-DR","CD20","CD68","Indoleamine 2- 3-dioxygenase (IDO)","CD3" ,"TCF1/TCF7" ,"FOXP3","CD45RA + CD45R0","CD8a","CD4"  ,"CD15" ,"Ki-67","CD279 (PD-1)")
+
+
+all.sce$immune_category <-all.sce$cell_category
+all.sce$immune_category[all.sce$cell_category=="T cell"] <-"Immune"
+
+agg_sce <-aggregateAcrossCells(all.sce[,all.sce$immune_category =="Immune"], ids=all.sce[,all.sce$immune_category =="Immune"]$cell_subtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+  #plot Heatmap from scater
+  scater::plotHeatmap(agg_sce,
+              features = immune.marker,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              colour_columns_by = cluster)
+  #plot Heatmap from scater
+  scater::plotHeatmap(agg_sce,
+              features = immune.marker,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              colour_columns_by = cluster,
+              width=10, height=10,
+              filename=file.path(plot_folder, paste0("HM_Immune_inclTcells",cluster,"_RPA.pdf")))
+  
+```
+
+
+#CAFs
+
+```{r, fig.width=15, fig.height=10}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+fibro.marker.cluster <-c("SMA","FAP", "Cadherin-11", "Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                 #"VCAM1",
+                 "Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73",
+                 #"MMP9",
+                 "CD10","Vimentin","CD248 / Endosialin",
+                 #"LYVE-1",
+                 "PDGFR-b","CD34","CXCL12","CCL21","Ki-67",
+                 #"Caveolin-1",
+                 "CD146","PNAd")
+
+all.sce$immune_category <-all.sce$cell_category
+all.sce$immune_category[all.sce$cell_category=="T cell"] <-"Immune"
+
+agg_sce <-aggregateAcrossCells(all.sce[,all.sce$cell_category =="Fibroblast"], ids=all.sce[,all.sce$cell_category =="Fibroblast"]$cell_type, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+  #plot Heatmap from scater
+  scater::plotHeatmap(agg_sce,
+              features = fibro.marker.cluster,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              colour_columns_by = cluster)
+  
+  
+  #plot Heatmap from scater
+  scater::plotHeatmap(agg_sce,
+              features = fibro.marker.cluster,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+             # zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              colour_columns_by = cluster,
+              width=10, height=10,
+              filename=file.path(plot_folder, paste0("HM_CAF_RPA.pdf")))
+  
+```
+#CAF c_HM
+```{r, fig.width=15, fig.height=15}
+library(circlize)
+col_fun = colorRamp2(c(0, 0.5, 1), c("blue", "white", "red"))
+col_fun = colorRamp2(c(seq(from=0, to=1, by=0.1)), c("#313695" ,"#4575B4" ,"#74ADD1" ,"#ABD9E9", "#E0F3F8", "#FFFFBF", "#FEE090", "#FDAE61", "#F46D43" ,"#D73027", "#A50026"))
+category20 <- c("#1F77B4","#FF7F0E","#2CA02C","#D62728","#9467BD","#8C564B","#E377C2","#7F7F7FFF","#BCBD22","#17BECF","#AEC7E8")
+
+fibro.marker.cluster <-c("SMA","FAP", "Cadherin-11", "Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                 #"VCAM1",
+                 "Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73",
+                 #"MMP9",
+                 "CD10","Vimentin","CD248 / Endosialin",
+                 #"LYVE-1",
+                 "PDGFR-b","CD34","Ki-67",
+                 #"Caveolin-1",
+                 "CD146")
+
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+lgd = Legend(col_fun = col_fun, title = "foo")
+rdylbu
+
+all.sce$DX.name[is.na(all.sce$DX.name)] <- "NA"
+
+fibro.sce <- all.sce[,all.sce$cell_category =="Fibroblast"]
+
+agg_sce <-aggregateAcrossCells(fibro.sce, ids=fibro.sce$cell_subtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+
+agg_sce <-aggregateAcrossCells(fibro.sce[, fibro.sce$DX.name=="Adenocarcinoma"|
+                                         fibro.sce$DX.name=="Squamous cell carcinoma"], ids=fibro.sce[, fibro.sce$DX.name=="Adenocarcinoma"|
+                                         fibro.sce$DX.name=="Squamous cell carcinoma"]$cell_subtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+agg_sce <- agg_sce[rownames(agg_sce) %in% fibro.marker.cluster,]
+
+
+agg_sce$cell_subtype <- factor(agg_sce$cell_subtype, levels = c("Collagen_CAF", "dCAF", "hypoxic_CAF","hypoxic_tpCAF","iCAF","IDO_CAF","mCAF","PDPN_CAF","SMA_CAF","tpCAF","vCAF"))
+fibro.sce$cell_subtype <- factor(fibro.sce$cell_subtype, levels = c("Collagen_CAF", "dCAF", "hypoxic_CAF","hypoxic_tpCAF","iCAF","IDO_CAF","mCAF","PDPN_CAF","SMA_CAF","tpCAF","vCAF"))
+
+#df_t$Celltype <- factor(df_t$Celltype, levels = c("Other", "Immune", "Stroma","Tumour"))
+
+hm.genes <- rownames(agg_sce)
+#hm.genes <- fibro.marker.cluster
+hm.val <- assay(agg_sce,"c_counts_asinh_scaled")[hm.genes,]
+
+#Type
+n.cells <-as.data.frame(table(fibro.sce[, fibro.sce$DX.name=="Adenocarcinoma"|
+                                         fibro.sce$DX.name=="Squamous cell carcinoma"]$cell_subtype,
+                              fibro.sce[, fibro.sce$DX.name=="Adenocarcinoma"|
+                                         fibro.sce$DX.name=="Squamous cell carcinoma"]$DX.name))
+n.cells <-n.cells %>% pivot_wider(names_from = Var2, values_from="Freq")
+names(n.cells)[names(n.cells) == 'Var1'] <- 'Celltype'
+n.cells
+n.cells$Frequency <- rowSums(n.cells[2:3])
+#colnames(n.cells) <-c("ids","Frequency")
+
+df <-data.frame("Cellcategory"=fibro.sce$immune_category, "Celltype"=fibro.sce$cell_subtype) %>% unique
+n.cells <-left_join(n.cells, df, by="Celltype")
+col.pal = list(Celltype = as.vector(category20), Cellcategory= palette("Tableau 10")[1])
+
+names(col.pal$Cellcategory) <- unique(fibro.sce$immune_category)
+names(col.pal$Celltype) <- unique(fibro.sce$cell_subtype)
+names(col.pal$Celltype) <- levels(fibro.sce$cell_subtype)
+
+#no cluster colour
+#col.pal <-list(Type= as.vector(category20)(11))
+
+#names(col.pal$Type) <- unique(fibro.sce$immune_category)
+#names(col.pal$Cluster) <- unique(fibro.sce$cell_subtype)
+
+#col.pal
+
+#cell type
+p<-Heatmap(hm.val, name="Cluster", col=col_fun,clustering_method_rows = "ward.D2",clustering_method_columns = "ward.D2",top_annotation = HeatmapAnnotation(Frequency=anno_barplot(n.cells$Frequency), col=col.pal,Type=n.cells$Type, Cluster=n.cells$ids)) #,col=col.pal
+draw(p)
+
+p<-Heatmap(hm.val, name=" ",
+           col=col_fun,
+           clustering_method_rows = "ward.D2",
+           clustering_method_columns = "ward.D2",
+           top_annotation = HeatmapAnnotation(Cellnumber = anno_barplot(cbind(sqrt(n.cells$Adenocarcinoma), sqrt(n.cells$`Squamous cell carcinoma`)),
+                                                                 gp = gpar(fill = c("black","grey"), col = c("black","grey")),
+                                                                 height = unit(2, "cm")),
+                                              col=col.pal,
+                                              #Cellcategory=n.cells$Cellcategory,
+                                              Celltype=n.cells$Celltype)) #,col=col.pal
+draw(p)
+
+#Save complex heatmap as pdf
+pdf(file=file.path(plot_folder, paste("C_HM_CAF-freq_sqrt_2cmbar.pdf")), width=8, height=8)
+draw(p)
+dev.off()
+```
+
+#CAF proportions per patient including clinical data and patient stratification into high and low
+```{r, fig.width=12, fig.height=6}
+category20 <- c("#1F77B4","#FF7F0E","#2CA02C","#D62728","#9467BD","#8C564B","#E377C2","#7F7F7FFF","#BCBD22","#17BECF","#AEC7E8")
+
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion.csv"))
+
+
+df$X <- NULL
+cols <- df %>% select(-Patient_ID) %>% colnames
+df[cols] <- lapply(df[cols], factor)
+ clinical.subset <- clinical.data %>% select(Patient_ID, Grade, Gender, Stage, DX.name, Dist.Met, LN.Met, NeoAdj, DX.name, Relapse)
+ 
+ 
+clinical.subset$DX.name[is.na(clinical.subset$DX.name)] <- "NA"
+clinical.subset$Grade[is.na(clinical.subset$Grade)] <- "NA"
+clinical.subset$Gender[is.na(clinical.subset$Gender)] <- "NA"
+clinical.subset$Dist.Met[is.na(clinical.subset$Dist.Met)] <- "NA"
+clinical.subset$LN.Met[is.na(clinical.subset$LN.Met)] <- "NA"
+clinical.subset$NeoAdj[is.na(clinical.subset$NeoAdj)] <- "NA"
+clinical.subset$Relapse[is.na(clinical.subset$Relapse)] <- "NA"
+
+
+clinical.subset <- clinical.subset[clinical.subset$DX.name=="Adenocarcinoma"|clinical.subset$DX.name=="Squamous cell carcinoma",]
+clinical.subset$Grade <- factor(clinical.subset$Grade)
+clinical.subset$Gender <- factor(clinical.subset$Gender)
+clinical.subset$Stage <- factor(clinical.subset$Stage)
+clinical.subset$DX.name <- factor(clinical.subset$DX.name)
+clinical.subset$Dist.Met <- factor(clinical.subset$Dist.Met)
+clinical.subset$LN.Met <- factor(clinical.subset$LN.Met)
+clinical.subset$NeoAdj <- factor(clinical.subset$NeoAdj)
+clinical.subset$Relapse <- factor(clinical.subset$Relapse)
+clinical.subset$DX.name <- factor(clinical.subset$DX.name)
+clinical.subset <-left_join(clinical.subset, df, by="Patient_ID")
+ 
+levels(clinical.subset$Gender) <- c("male","female","NA")
+levels(clinical.subset$Grade) <- c("Grade 1","Grade 2","Grade 3","NA")
+levels(clinical.subset$Stage) <- c("Stage 1","Stage 2","Stage 3","Stage 4","Stage 5","Stage 6","Stage 7","NA")
+
+tdat <-as.data.frame(table( fibro.sce[, fibro.sce$Patient_ID!="Control"&
+                                           fibro.sce$DX.name=="Adenocarcinoma"|
+                                           fibro.sce$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                            fibro.sce[, fibro.sce$Patient_ID!="Control"&
+                                           fibro.sce$DX.name=="Adenocarcinoma"|
+                                           fibro.sce$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("Patient_ID","Phenotype","n")
+
+tdat <-tdat %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+tdat[is.na(tdat)] <- 0
+tdat$Phenotype <-droplevels(tdat$Phenotype)
+tdat$Patient_ID <-droplevels(tdat$Patient_ID)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+hc <- hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2")
+tdat_wide <- data.frame(tdat_wide)
+
+ 
+tdat_wide_c <- left_join(tdat_wide, clinical.subset, by = "Patient_ID")
+tdat_wide_c$DX.name[is.na(tdat_wide_c$DX.name)] <- "NA"
+tdat_wide_c$Grade[is.na(tdat_wide_c$Grade)] <- "NA"
+tdat_wide_c$Gender[is.na(tdat_wide_c$Gender)] <- "NA"
+tdat_wide_c$Dist.Met[is.na(tdat_wide_c$Dist.Met)] <- "NA"
+tdat_wide_c$LN.Met[is.na(tdat_wide_c$LN.Met)] <- "NA"
+tdat_wide_c$NeoAdj[is.na(tdat_wide_c$NeoAdj)] <- "NA"
+tdat_wide_c$Relapse[is.na(tdat_wide_c$Relapse)] <- "NA"
+
+tdat_wide_c$Patient_ID <- factor(tdat_wide_c$Patient_ID, levels = hc$labels[hc$order])
+tdat_wide_c <- tdat_wide_c %>% as.data.frame
+rownames(tdat_wide_c) <-tdat_wide_c$Patient_ID
+
+library(wesanderson)
+row_dend = as.dendrogram(hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2"))
+
+h1 <-Heatmap(as.matrix(tdat_wide_c$Patient_ID),
+             rect_gp = gpar(type = "none"),
+             cluster_rows=row_dend,
+             show_heatmap_legend = FALSE,
+        left_annotation = rowAnnotation(Proportions=anno_barplot(tdat_wide_c[2:12], 
+                                                                 gp=gpar(fill=category20, 
+                                                                         col=category20),
+                                                                 bar_width = 1, 
+                                                                 width = unit(6, "cm"), 
+                                                                 height = unit(6, "cm")),
+                    Grade=tdat_wide_c$Grade,
+                    Gender=tdat_wide_c$Gender,
+                    Dist.Met=tdat_wide_c$Dist.Met,
+                    LN.Met=tdat_wide_c$LN.Met,
+                    Type=tdat_wide_c$DX.name,
+                    NeoAdj=tdat_wide_c$NeoAdj,
+                    Relapse=tdat_wide_c$Relapse,
+                   # mCAF_G= tdat_wide_c$mCAF_G,
+                    tpCAF_G= tdat_wide_c$tpCAF_G,
+                    iCAF_G= tdat_wide_c$iCAF_G,
+                    #SMA_CAF_G= tdat_wide_c$SMA_CAF_G,
+                    PDPN_CAF_G= tdat_wide_c$PDPN_CAF_G,
+                    IDO_CAF_G= tdat_wide_c$IDO_CAF_G,
+                    hypoxic_CAF_G= tdat_wide_c$hypoxic_CAF_G,
+                    vCAF_G = tdat_wide_c$vCAF_G,
+                    dCAF_G = tdat_wide_c$dCAF_G,
+                    hypoxic_tpCAF_G= tdat_wide_c$hypoxic_tpCAF_G,
+        col = list(Grade=c("Grade 1"=palette("Tableau 10")[6],
+                           "Grade 2"=palette("Tableau 10")[7],
+                           "Grade 3"=palette("Tableau 10")[8],
+                           "NA"="black"),
+               Gender = c("male"=brewer.pal(n = 8, name = "Dark2")[1],
+                           "female"=brewer.pal(n = 8, name = "Dark2")[4],
+                           "NA"="black"),
+               Dist.Met = c("Dist. Metastases"=brewer.pal(n = 8, name = "Dark2")[2],
+                           "No Dist. Metastases"=brewer.pal(n = 8, name = "Dark2")[3],
+                           "NA"="black"),
+               LN.Met = c("LN Metastases"=brewer.pal(n = 8, name = "Dark2")[5],
+                           "No LN Metastases"=brewer.pal(n = 8, name = "Dark2")[8],
+                           "NA"="black"),
+               Type = c("Squamous cell carcinoma"="black",
+                           "Adenocarcinoma"="grey"),
+               NeoAdj = c("NeoAdjuvantTherapy"=brewer.pal(n = 8, name = "Dark2")[7],
+                          "NoNeoAdjuvantTherapy"=brewer.pal(n = 8, name = "Dark2")[6],
+                          "NA"= "black"),
+                Relapse = c("0"=pal_jco()(10)[4],
+                          "1"=pal_jco()(10)[5],
+                          "NA"= "black"),
+              # mCAF_G = c("mCAF high"="#046C9A",
+               #              "mCAF low"="#ECCBAE"),
+               tpCAF_G = c("tpCAF high"="#046C9A",
+                             "tpCAF low"="#ECCBAE"),
+               #SMA_CAF_G = c("SMA_CAF high"="#046C9A",
+               #              "SMA_CAF low"="#ECCBAE"),
+               iCAF_G = c("iCAF high"="#046C9A",
+                             "iCAF low"="#ECCBAE"),
+               PDPN_CAF_G = c("PDPN_CAF high"="#046C9A",
+                             "PDPN_CAF low"="#ECCBAE"),
+               IDO_CAF_G = c("IDO_CAF high"="#046C9A",
+                             "IDO_CAF low"="#ECCBAE"),
+               vCAF_G = c("vCAF high"="#ECCBAE",
+                             "vCAF low"="#046C9A"),
+               dCAF_G = c("dCAF high"="#ECCBAE",
+                             "dCAF low"="#046C9A"),
+               hypoxic_CAF_G = c("hypoxic_CAF high"="#ECCBAE",
+                             "hypoxic_CAF low"="#046C9A"),
+               hypoxic_tpCAF_G = c("hypoxic_tpCAF high"="#ECCBAE",
+                             "hypoxic_tpCAF low"="#046C9A")
+               
+               )
+                    
+                    ))
+draw(h1,heatmap_legend_side = "right")
+
+pdf(file=file.path(plot_folder, paste("All_patients_CAF_info_right_legend.pdf")), width=7, height=10)
+draw(h1,heatmap_legend_side = "right")
+
+dev.off()
+   
+
+pdf(file=file.path(plot_folder, paste("All_patients_info_CAF-strat_reduced.pdf")), width=12, height=6)
+draw(h1,heatmap_legend_side = "right")
+
+dev.off()
+
+
+
+
+
+
+
+df_t <-prop.table(table( 
+                            all.sce[, all.sce$Patient_ID!="Control"&
+                                           all.sce$DX.name=="Adenocarcinoma"|
+                                           all.sce$DX.name=="Squamous cell carcinoma"]$category_cell)) %>% data.frame
+colnames(df_t) <-c("Celltype","Freq")
+df_t$Celltype <- factor(df_t$Celltype, levels = c("Other", "Immune", "Stroma","Tumour"))
+ # levels(df_t$Var1) <- c("Tumour","Stroma","Immune","Other")
+p <-df_t%>%ggplot(aes(y=Freq, fill=Celltype, x=""))+geom_bar(position="fill", stat="identity")+scale_fill_tableau()+theme_void()
+plot(p)
+ggsave(p, file=file.path(plot_folder, "Barplot_proportions_tumour-immune-stroma-other.pdf"), width=2, height=8)
+```
+
+#da
+```{r  Differential Abundance Analysis Types over Metastasis clean, fig.width=6, fig.height=4, warning=F, message=F,echo=F, out.width="50%"}
+#Patient Number must be numeric
+library(tidyr)
+#groupId must be factor
+
+colData(fibro.sce)<-as.data.frame(colData(fibro.sce)) %>% 
+  group_by(Patient_ID) %>% mutate(NR=cur_group_id()) %>% DataFrame()
+dat <-as_tibble(colData(fibro.sce))
+#if necessary: change group_id labels
+
+dat <-dat[dat$DX.name=="Adenocarcinoma" | dat$DX.name=="Squamous cell carcinoma",]
+
+
+subtype <-c("Gender","Relapse","Chemo","Dist.Met","LN.Met","Relapse")
+
+#define the naming subtype aka Celltype
+
+j <-"cell_subtype"
+
+plot_list <- list()
+for (i in subtype) {
+  for(k in unique(dat$DX.name)){    #uncomment this if you want to split your loop e.g. by tumour type
+    dat.l <-subset(dat, DX.name==k) #uncomment this if you want to split your loop e.g. by tumour type
+
+dat.l <-dat
+#k="both tumour types" # comment this if you want to split by e.g. tumour type
+dat.l$group_id <-as.factor(dat.l[[i]])
+dat.l<-dat.l %>% drop_na(paste(i))
+
+test <- dat.l %>% select(c("NR",j,"group_id"))
+
+test_wide <- pivot_wider(test,id_cols=c("NR","group_id"),names_from = "cell_subtype", values_from ="cell_subtype", values_fn = list(cell_subtype=length),names_prefix = "")
+
+test_wide
+test_wide[is.na(test_wide)] <- 0
+
+design <- createDesignMatrix(
+  test_wide[,c("NR","group_id")], cols_design = c( "NR","group_id")
+)
+
+contrast <- createContrast(c(rep(0, ncol(design)-1),1))
+data.frame(parameters = colnames(design), contrast)
+
+test_wide_norm <- test_wide %>% select(-c("NR","group_id"))
+#Normalize
+norm_factors <- calcNormFactors(t(test_wide_norm), method = "TMM")
+y <- DGEList(t(test_wide_norm), norm.factors = norm_factors)
+
+y <- estimateDisp(y,design)
+
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, contrast = contrast)
+top <- edgeR::topTags(lrt, n = Inf, adjust.method = "BH", 
+        sort.by = "none")
+t.op <-as.data.frame(top)
+t.op <- tibble::rownames_to_column(t.op, "FibroTypes")
+
+plot_list[[k]] <-
+ggplot(t.op, aes(reorder(FibroTypes,logFC), logFC)) +
+  geom_col(aes(fill=PValue<0.05)) +
+  coord_flip() +
+  scale_fill_tableau()+
+  labs(x="Celltype", y="logFC",
+       title=paste("Phenotypes over",i,k))+
+  theme_bw()+
+  theme(strip.background = element_blank(),
+        panel.background=element_rect(fill='white', colour = 'black'),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.text.y = element_text(size=10))
+#plot(p)
+
+
+  } #uncomment this if you want to split by e.g. tumour type
+  gridExtra::grid.arrange(grobs = plot_list)
+  
+    #save individual pdf plots for each variable
+  #pdf(file=file.path(plot_folder, paste0("DA_Celltype_n_over_",i,".pdf")))
+  #gridExtra::grid.arrange(grobs = plot_list)
+  #dev.off()
+}
+
+t.op %>% ggplot(aes(x=logCPM, y=logFC, color=FibroTypes))+geom_point()+scale_color_tableau()
+t.op %>% ggplot(aes(x=logCPM, y=logFC, color=PValue<0.05))+geom_point()+scale_color_tableau()
+```
+#end CAFs
+
+```{r}
+library("scales")
+
+palettes <- ggthemes_data[["tableau"]][["color-palettes"]][["regular"]]
+for (palname in names(palettes)) {
+  pal <- tableau_color_pal(palname)
+  max_n <- attr(pal, "max_n")
+  show_col(pal(max_n))
+  title(main = palname)
+}
+show_col(pal_d3("category20")(20))
+category20 <- c("#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","7f7f7f","#bcbd22","#17becf","#aec7e8")
+```
+
+
+#proportinos per patient
+## Patients are ordered by hierarchical clustering (euclidian, wards.D2)
+```{r  Fibro category proportions ordered by hierarchical clustering, message=FALSE, warning=FALSE, echo=FALSE}
+
+all.sce$category_cell <-all.sce$immune_category
+all.sce$category_cell[all.sce$cell_category=="vessel"] <-"Stroma"
+all.sce$category_cell[all.sce$cell_category=="Fibroblast"] <-"Stroma"
+
+all.sce$immune_category <-all.sce$cell_category
+all.sce$immune_category[all.sce$cell_category=="T cell"] <-"Immune"
+all.sce$DX.name[is.na(all.sce$DX.name)] <- "NA"
+
+tdat <-as.data.frame(table( all.sce[, all.sce$Patient_ID!="Control"&
+                                           all.sce$DX.name=="Adenocarcinoma"|
+                                           all.sce$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                            all.sce[, all.sce$Patient_ID!="Control"&
+                                           all.sce$DX.name=="Adenocarcinoma"|
+                                           all.sce$DX.name=="Squamous cell carcinoma"]$category_cell))
+
+tdat <-as.data.frame(table( all.sce[, all.sce$Patient_ID!="Control"&
+                                           all.sce$DX.name=="Adenocarcinoma"|
+                                           all.sce$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                            all.sce[, all.sce$Patient_ID!="Control"&
+                                           all.sce$DX.name=="Adenocarcinoma"|
+                                           all.sce$DX.name=="Squamous cell carcinoma"]$immune_category))
+colnames(tdat)<-c("Patient_ID","Phenotype","n")
+
+tdat <-tdat %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+tdat[is.na(tdat)] <- 0
+tdat$Phenotype <-droplevels(tdat$Phenotype)
+tdat$Patient_ID <-droplevels(tdat$Patient_ID)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+hc <- hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2")
+tdat_wide$Patient_ID <- factor(tdat_wide$Patient_ID, levels = hc$labels[hc$order])
+tdat$Patient_ID <- factor(tdat$Patient_ID, levels = hc$labels[hc$order])
+
+tdat_wide
+
+row_dend = as.dendrogram(hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2"))
+
+sum(tdat_wide[,-1])
+```
+
+```{r, fig.width=12, fig.height=6}
+var <- "CT4"
+plot <- "immune_frequencies_clinical"
+
+m <- match(order.histo,clin$SaNr)
+fq_df <- cbind(data.table("sample" = order.histo),clin[m,sel.clin])
+fq_df$sample <- factor(fq_df$sample,levels = order.histo)
+
+
+df <-reshape2::melt(fq_df, id.vars =c("sample"), variable.name = "clinical_features", value.name = "value")
+length(unique(df$sample))
+
+
+p<- ggplot(df, aes(y=Patient_ID, x=clinical_features, fill= value))+
+  geom_tile(color="white")+
+     # scale_fill_manual(values = color_clusters_3)+
+  scale_fill_tableau("Tableau 20")+
+   theme_bw()+ theme(
+    panel.grid = element_blank(), 
+    legend.key.size = unit(4, "mm"),
+    axis.text = element_text(color = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank())
+p
+
+file_nm <- sprintf("%s__%s_%s.pdf", pp_prefix, var, plot)
+ ggsave(p, filename = file.path(vsrs_folder, file_nm), height = 6, width = 12,dpi=300)
+ 
+ #####################################################################
+ clinical.subset <- clinical.data %>% select(Patient_ID, Grade, Gender, Stage, DX.name, Dist.Met, LN.Met)
+ clinical.subset <- clinical.subset[clinical.subset$DX.name=="Adenocarcinoma"|clinical.subset$DX.name=="Squamous cell carcinoma",]
+ clinical.subset$Grade <- factor(clinical.subset$Grade)
+ clinical.subset$Gender <- factor(clinical.subset$Gender)
+ clinical.subset$Stage <- factor(clinical.subset$Stage)
+ clinical.subset$DX.name <- factor(clinical.subset$DX.name)
+ clinical.subset$Dist.Met <- factor(clinical.subset$Dist.Met)
+ clinical.subset$LN.Met <- factor(clinical.subset$LN.Met)
+ levels(clinical.subset$Gender) <- c("male","female")
+  levels(clinical.subset$Grade) <- c("Grade 1","Grade 2","Grade 3")
+ levels(clinical.subset$Stage) <- c("Stage 1","Stage 2","Stage 3","Stage 4","Stage 5","Stage 6","Stage 7")
+ df <-reshape2::melt(clinical.subset, id.vars =c("Patient_ID"), variable.name = "clinical_features", value.name = "value")
+levels(clinical.subset$Stage)
+
+ha = HeatmapAnnotation(foo = anno_simple(1:10, height = unit(2, "cm")))
+ha = HeatmapAnnotation(Grade=anno_simple(clinical.data$Grade))
+ha = rowAnnotation(Grade=anno_simple(clinical.data$Grade))
+
+plot(ha)
+tdat_wide_c <- left_join(tdat_wide, clinical.data, by="Patient_ID")
+tdat_wide_c$Patient_ID <- factor(tdat_wide_c$Patient_ID, levels = hc$labels[hc$order])
+tdat_wide_c <- tdat_wide_c %>% as.data.frame
+rownames(tdat_wide_c) <-tdat_wide_c$Patient_ID
+hm <- rowAnnotation(Proportions=anno_barplot(tdat_wide_c[2:5], gp=gpar(fill=2:5, col=2:5),bar_width = 1, width = unit(12, "cm"), height = unit(6, "cm")),
+                    Grade=anno_simple(tdat_wide_c$Grade),
+                    Gender=anno_simple(tdat_wide_c$Gender),
+                    Dist.Met=anno_simple(tdat_wide_c$Dist.Met),
+                    LN.Met=anno_simple(tdat_wide_c$LN.Met),
+                    Type=anno_simple(tdat_wide_c$DX.name),
+                    NeoAdj=anno_simple(tdat_wide_c$NeoAdj),
+                    Relapse=anno_simple(tdat_wide_c$Relapse))
+plot(hm)
+
+
+hc$labels[hc$order]
+h1 <-Heatmap(as.matrix(tdat_wide_c$Patient_ID), rect_gp = gpar(type = "none"),cluster_rows=row_dend,show_heatmap_legend = FALSE,
+        left_annotation = rowAnnotation(Proportions=anno_barplot(tdat_wide_c[2:5], gp=gpar(fill=2:5, col=2:5),bar_width = 1, width = unit(12, "cm"), height = unit(6, "cm")),
+                    Grade=anno_simple(tdat_wide_c$Grade),
+                    Gender=anno_simple(tdat_wide_c$Gender),
+                    Dist.Met=anno_simple(tdat_wide_c$Dist.Met),
+                    LN.Met=anno_simple(tdat_wide_c$LN.Met),
+                    Type=anno_simple(tdat_wide_c$DX.name),
+                    NeoAdj=anno_simple(tdat_wide_c$NeoAdj),
+                    Relapse=anno_simple(tdat_wide_c$Relapse)
+                    
+                    ))
+draw(h1)
+
+library(wesanderson)
+#here
+col_c <- c("#4E79A7","#E15759","#59A14F","#76B7B2","#F28E2B")
+h1 <-Heatmap(as.matrix(tdat_wide_c$Patient_ID), rect_gp = gpar(type = "none"),cluster_rows=row_dend,show_heatmap_legend = FALSE,
+        left_annotation = rowAnnotation(Proportions=anno_barplot(tdat_wide_c[2:6], gp=gpar(fill=col_c[1:5], col=col_c[1:5]),bar_width = 1, width = unit(6, "cm"), height = unit(6, "cm")),
+                    Grade=tdat_wide_c$Grade,
+                    Gender=tdat_wide_c$Gender,
+                    Dist.Met=tdat_wide_c$Dist.Met,
+                    LN.Met=tdat_wide_c$LN.Met,
+                    Type=tdat_wide_c$DX.name,
+                    NeoAdj=tdat_wide_c$NeoAdj,
+                    Relapse=tdat_wide_c$Relapse,
+        col = list(Grade=c("1"=palette("Tableau 10")[6],
+                           "2"=palette("Tableau 10")[7],
+                           "3"=palette("Tableau 10")[8],
+                           "NA"="black"),
+               Gender = c("1"=brewer.pal(n = 8, name = "Dark2")[1],
+                           "2"=brewer.pal(n = 8, name = "Dark2")[4],
+                           "NA"="black"),
+               Dist.Met = c("Dist. Metastases"=brewer.pal(n = 8, name = "Dark2")[2],
+                           "No Dist. Metastases"=brewer.pal(n = 8, name = "Dark2")[3],
+                           "NA"="black"),
+               LN.Met = c("LN Metastases"=brewer.pal(n = 8, name = "Dark2")[5],
+                           "No LN Metastases"=brewer.pal(n = 8, name = "Dark2")[8],
+                           "NA"="black"),
+               Type = c("Squamous cell carcinoma"="black",
+                           "Adenocarcinoma"="grey",
+                           "NA"="black"),
+               NeoAdj = c("NeoAdjuvantTherapy"=brewer.pal(n = 8, name = "Dark2")[7],
+                          "NoNeoAdjuvantTherapy"=brewer.pal(n = 8, name = "Dark2")[6],
+                          "NA"= "black"),
+                Relapse = c("0"=pal_jco()(10)[4],
+                          "1"=pal_jco()(10)[5],
+                          "NA"= "black")
+               )
+                    
+                    ))
+draw(h1,heatmap_legend_side = "right")
+
+pdf(file=file.path(plot_folder, paste("New_All_patients_info_bottom_legend.pdf")), width=7, height=10)
+draw(h1,heatmap_legend_side = "bottom")
+
+dev.off()
+   
+
+pdf(file=file.path(plot_folder, paste("NEW_All_patients_info.pdf")), width=8, height=6)
+draw(h1,heatmap_legend_side = "right")
+
+dev.off()
+
+
+tdat_wide_c$DX.name[is.na(tdat_wide_c$DX.name)] <- "NA"
+tdat_wide_c$Grade[is.na(tdat_wide_c$Grade)] <- "NA"
+tdat_wide_c$Gender[is.na(tdat_wide_c$Gender)] <- "NA"
+tdat_wide_c$Dist.Met[is.na(tdat_wide_c$Dist.Met)] <- "NA"
+tdat_wide_c$LN.Met[is.na(tdat_wide_c$LN.Met)] <- "NA"
+tdat_wide_c$NeoAdj[is.na(tdat_wide_c$NeoAdj)] <- "NA"
+tdat_wide_c$Relapse[is.na(tdat_wide_c$Relapse)] <- "NA"
+
+
+
+
+
+df_t <-prop.table(table( 
+                            all.sce[, all.sce$Patient_ID!="Control"&
+                                           all.sce$DX.name=="Adenocarcinoma"|
+                                           all.sce$DX.name=="Squamous cell carcinoma"]$immune_category)) %>% data.frame
+colnames(df_t) <-c("Celltype","Freq")
+df_t$Celltype <- factor(df_t$Celltype, levels = c("Fibroblast", "vessel", "Immune","Tumour","Other"))
+df_t$n <- df_t$Freq*100
+
+
+#here
+p <-df_t%>%ggplot(aes(y=Freq, fill=Celltype, x=""))+geom_bar(position="fill", stat="identity")+scale_fill_tableau()+theme_void()+scale_color_manual(values=c("#4E79A7","#E15759","#59A14F","#76B7B2","#F28E2B"))
+plot(p)
+ggsave(p, file=file.path(plot_folder, "NEW_Barplot_proportions_tumour-immune-stroma-other.pdf"), width=2, height=8)
+```
+
+Patient based metaclusters split by metacluster
+```{r  Barplot Fibro category proportions, message=FALSE, warning=FALSE, echo=FALSE, fig.width=6, fig.height=12}
+#add clinical data bars
+tdat <-left_join(tdat,clinical.data, by="Patient_ID")
+clinical.data$Grade <- factor(clinical.data$Grade)
+clinical.data$Patient_ID <- factor(clinical.data$Patient_ID, levels = hc$labels[hc$order])
+
+clinical.data[clinical.data$Patient_ID %in% tdat$Patient_ID,]%>% ggplot(aes(y=Patient_ID, fill=Grade))+geom_bar()
+#Barplot proportions ordered by
+p <-ggplot(tdat,aes(x=freq, y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 10")
+plot(p)
+ggsave(plot=p, file=file.path(plot_folder, paste("Barplot_All_cells_Category_sito_over_FILTEREDpatients_ordered-hc.pdf")), width=6, height=6)
+
+#dendrogram coloured by metacluster
+ggdend <-hc%>% as.dendrogram() %>% dendextend::set("branches_k_color", k =15) %>%  as.ggdend()
+p1 <-ggplot(ggdend, labels = F)+scale_x_continuous(expand = c(0, 0))+
+  theme_void()+
+  coord_flip()+
+  scale_y_reverse()
+
+#n
+p2<-ggplot(tdat,aes(x=n, y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+theme(
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.y=element_blank())
+plt <-p1+
+  p+theme(legend.position = "none", axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.y=element_blank())+
+  p2
+
+plot(plt)
+#ggsave(plot=plt, file=file.path(plot_folder, paste("Barplot_n_hc_cell_type_proportions.pdf")), width=6, height=6)
+```
+
+
+#CAF plots correlation plots upper and lower proportions and densities
+
+```{r  Correlations T cell type densities amongst eachother, message=FALSE, warning=FALSE, echo=FALSE, fig.width=6, fig.height=6}
+fibro.sce_pat.roi$NeoAdj <- ifelse(fibro.sce_pat.roi$Chemo==1 |fibro.sce_pat.roi$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+tdat <-as.data.frame(table(fibro.sce_pat.roi[,fibro.sce_pat.roi$Patient_ID!="Control"&
+                                          fibro.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          fibro.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           fibro.sce_pat.roi[,fibro.sce_pat.roi$Patient_ID!="Control"&
+                                          fibro.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          fibro.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$cell_type))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=fibro.sce_pat.roi$RoiID,
+                                "Area"=fibro.sce_pat.roi$Area_px_Core,
+                                "Patient_ID"=fibro.sce_pat.roi$Patient_ID,
+                                "DX.name"=fibro.sce_pat.roi$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Patient_ID) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+tdat <-tdat %>% 
+  group_by(RoiID,Phenotype) %>%
+  summarise(across(-c(Patient_ID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+tdat_wide <- pivot_wider(tdat,id_cols=c("RoiID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+
+neoadj_roi <- clinical.data %>% filter(NeoAdj == "NeoAdjuvantTherapy") %>% select(RoiID) 
+
+tdat_wide <-tdat_wide[!tdat_wide$RoiID%in% neoadj_roi$RoiID,]
+rownames(tdat_wide)<-tdat_wide$RoiID
+
+library(corrplot)
+cor(tdat_wide[,-1], method="pearson")
+#corrplot(cor(tdat_wide[,-1], method="pearson"), col=rev(brewer.pal(10,"RdBu")))
+
+#test <- immune.pheno.sub %>% select(contains("Ratio"))
+#test$Ratio_tCAF_vCAF <-NULL
+sig <- cor.mtest(tdat_wide[,-1], conf.level = .95) #is this test right?
+
+
+#plot
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+         col=rev(brewer.pal(10,"RdBu")),
+         pch.col = "white",
+         #type="upper",
+         title = "Correlation of CAF type densities",
+        mar=c(0,0,3,0))
+
+col_fun = colorRamp2(c(0, 0.5, 1), c("blue", "white", "red"))
+
+pdf(file=file.path(plot_folder, "CAF_density_corrplot_upper.pdf"), width=6, height=6)
+
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         type="upper",
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+        #col=rev(brewer.pal(8,"RdBu")),
+        col=rev(COL2('RdBu', 8)),
+        method="square",
+         pch.col = "white",
+         #type="upper",
+       #  title = "Correlation of CAF type densities",
+        mar=c(0,0,3,0))
+dev.off()
+
+#col=wes_palette("Zissou1", 100, type = "continuous"),
+```
+
+```{r  Correlations proportions per image CAF types,message=FALSE,warning=FALSE,echo=FALSE, fig.width=6, fig.height=6}
+fibro.sce_roi$NeoAdj <- ifelse(fibro.sce_roi$Chemo==1 |fibro.sce_roi$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+tdat <-as.data.frame(table(fibro.sce_roi[,fibro.sce_roi$DX.name!="Control"&
+                                          fibro.sce_roi$DX.name=="Adenocarcinoma"|
+                                          fibro.sce_roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           fibro.sce_roi[,fibro.sce_roi$DX.name!="Control"&
+                                          fibro.sce_roi$DX.name=="Adenocarcinoma"|
+                                          fibro.sce_roi$DX.name=="Squamous cell carcinoma"]$cell_type))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+tdat <-tdat %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(freq = n / sum(n))
+tdat[is.na(tdat)] <- 0
+tdat$Phenotype <-droplevels(tdat$Phenotype)
+tdat$RoiID <-droplevels(tdat$RoiID)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("RoiID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+#tdat_wide <-tdat_wide[!tdat_wide$RoiID%in% neoadj_pat$RoiID,]
+rownames(tdat_wide)<-tdat_wide$RoiID
+
+library(corrplot)
+cor(tdat_wide[,-1], method="pearson")
+#corrplot(cor(tdat_wide[,-1], method="pearson"), col=rev(brewer.pal(10,"RdBu")))
+
+sig <- cor.mtest(tdat_wide[,-1], conf.level = .95) #is this test right?
+
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+         col=rev(brewer.pal(10,"RdBu")),
+         pch.col = "white",
+         #type="upper",
+         title = "Correlated ratios of CAF type proportions",
+        mar=c(0,0,3,0))
+
+pdf(file=file.path(plot_folder, "CAF_proportion_corrplot.pdf"), width=6, height=6)
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         type="lower",
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+        #col=rev(brewer.pal(8,"RdBu")),
+        col=rev(COL2('RdBu', 8)),
+        method="square",
+         pch.col = "white",
+         #type="upper",
+        # title = "Correlation of CAF type proportions",
+        mar=c(0,0,3,0))
+dev.off()
+```
+
+#all cells
+
+```{r  Table with immune cell numbers per patient, echo=FALSE, message=FALSE, warning=FALSE}
+#All Fibros together
+tbl <- as.data.frame(table(all.sce[,all.sce$Patient_ID!="Control" ]$Patient_ID))
+colnames(tbl) <-c("Patient ID", "Fibro number overall")
+#write.csv(tbl, file=file.path(plot_folder, paste("Immune cell numbers per patient overall including T-excluding undefined cells.csv")))
+#print(tbl)
+
+summary(tbl$`Fibro number overall`) #3-6259
+tbl[tbl$`Fibro number overall` <=100,] #43 patients have less than 100 F
+
+#Lowest 10% of all patients' Fibro numbers
+tbl[order(tbl$`Fibro number overall`),]$`Fibro number overall`[1:10] #1-23
+
+
+#Highest 10% of all patients' Fibro numbers
+tbl[order(-tbl$`Fibro number overall`),]$`Fibro number overall`[1:100] #760-2378
+
+tbl[tbl$`Fibro number overall` <=2000,] #43 patients have less than 100 Fibros=10%. 77 patients have less than 15 Fibros
+
+all_pat <- tbl[tbl$`Fibro number overall` <=2000,]$`Patient ID`
+
+length(unique(all.sce$Patient_ID))
+```
+
+Remove ROIs
+```{r  Table with Immune cell numbers per image, echo=FALSE, message=FALSE, warning=FALSE}
+#All Immune cells together
+tbl <- as.data.frame(table(all.sce[,all.sce$Patient_ID!="Control"]$RoiID))
+colnames(tbl) <-c("ROI ID", "Fibro number overall")
+#write.csv(tbl, file=file.path(plot_folder, paste("Fibro numbers per ROI overall including Fibros-excluding undefined.csv")))
+#print(tbl)
+summary(tbl$`Fibro number overall`) #1-5075
+tbl[tbl$`Fibro number overall` <=1000,] #93 images have less than 50 Fibros (10% of median)
+#Lowest 10% of all patients' Fibro numbers
+tbl[order(tbl$`Fibro number overall`),]$`Fibro number overall`[1:200] #1-110
+
+#Highest 10% of all patients' Fibro numbers
+tbl[order(-tbl$`Fibro number overall`),]$`Fibro number overall`[1:200] #1385-5075
+#per image cut at 50 Fibros per image equals lowest 5% -> ensures that there's at least 50 Fibros per patient
+
+all_roi <- tbl[tbl$`Fibro number overall` <=1000,]$`ROI ID`
+```
+
+
+Remove patients and roi
+```{r  patient roi and pat_roi removal, echo=FALSE, message=FALSE, warning=FALSE}
+#Patient removal
+all.sce_pat <- all.sce[,all.sce$Patient_ID!="Control"&
+                               !all.sce$Patient_ID%in%all_pat]
+length(unique(all.sce_pat$Patient_ID)) #1025
+
+#Roi removal
+all.sce_roi <- all.sce[,all.sce$Patient_ID!="Control"&
+                               !all.sce$RoiID%in%all_roi]
+length(unique(all.sce_roi$Patient_ID)) #1039
+
+#Patient & Roi removal
+all.sce_pat.roi <- all.sce[,all.sce$Patient_ID!="Control"&
+                               !all.sce$Patient_ID%in%all_pat&
+                               !all.sce$RoiID%in%all_roi]
+length(unique(all.sce_pat.roi$Patient_ID)) #1025
+```
+
+```{r, save RDS for all pat roi removed}
+saveRDS(all.sce_pat, file=file.path(data_folder, "FINAL_all-sce_inc_all_pat.rds"))
+saveRDS(all.sce_roi,file=file.path(data_folder, "FINAL_all-sce_inc_all_roi.rds"))
+saveRDS(all.sce_pat.roi,file=file.path(data_folder, "FINAL_all-sce_inc_all_pat-roi.rds"))
+
+#readRDS(file=file.path(data_folder, "FINAL_All_Clustered_FILTERED_inc_tumour_vessel_immune_CAF_Other.rds"))
+```
+
+
+```{r  Correlations T cell type densities amongst eachother, message=FALSE, warning=FALSE, echo=FALSE, fig.width=6, fig.height=6}
+all.sce_pat.roi$NeoAdj <- ifelse(all.sce_pat.roi$Chemo==1 |all.sce_pat.roi$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+tdat <-as.data.frame(table(all.sce_pat.roi[,all.sce_pat.roi$Patient_ID!="Control"&
+                                          all.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          all.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           all.sce_pat.roi[,all.sce_pat.roi$Patient_ID!="Control"&
+                                          all.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          all.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=all.sce_pat.roi$RoiID,
+                                "Area"=all.sce_pat.roi$Area_px_Core,
+                                "Patient_ID"=all.sce_pat.roi$Patient_ID,
+                                "DX.name"=all.sce_pat.roi$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Patient_ID) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+tdat <-tdat %>% 
+  group_by(RoiID,Phenotype) %>%
+  summarise(across(-c(Patient_ID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+tdat_wide <- pivot_wider(tdat,id_cols=c("RoiID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+
+neoadj_roi <- clinical.data %>% filter(NeoAdj == "NeoAdjuvantTherapy") %>% select(RoiID) 
+
+tdat_wide <-tdat_wide[!tdat_wide$RoiID%in% neoadj_roi$RoiID,]
+rownames(tdat_wide)<-tdat_wide$RoiID
+
+library(corrplot)
+cor(tdat_wide[,-1], method="pearson")
+#corrplot(cor(tdat_wide[,-1], method="pearson"), col=rev(brewer.pal(10,"RdBu")))
+
+#test <- immune.pheno.sub %>% select(contains("Ratio"))
+#test$Ratio_tCAF_vCAF <-NULL
+sig <- cor.mtest(tdat_wide[,-1], conf.level = .95) #is this test right?
+
+
+#plot
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+         col=rev(brewer.pal(10,"RdBu")),
+         pch.col = "white",
+         #type="upper",
+         title = "Correlation of CAF type densities",
+        mar=c(0,0,3,0))
+library(circlize)
+col_fun = colorRamp2(c(0, 0.5, 1), c("blue", "white", "red"))
+
+pdf(file=file.path(plot_folder, "All cellSUB_density_corrplot_upper.pdf"), width=6, height=6)
+
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         type="upper",
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+        #col=rev(brewer.pal(8,"RdBu")),
+        col=rev(COL2('RdBu', 8)),
+        method="square",
+         pch.col = "white",
+         #type="upper",
+       #  title = "Correlation of CAF type densities",
+        mar=c(0,0,3,0))
+dev.off()
+
+#col=wes_palette("Zissou1", 100, type = "continuous"),
+```
+
+```{r  Correlations proportions per image CAF types,message=FALSE,warning=FALSE,echo=FALSE, fig.width=6, fig.height=6}
+all.sce_roi$NeoAdj <- ifelse(all.sce_roi$Chemo==1 |all.sce_roi$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+tdat <-as.data.frame(table(all.sce_roi[,all.sce_roi$DX.name!="Control"&
+                                          all.sce_roi$DX.name=="Adenocarcinoma"|
+                                          all.sce_roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           all.sce_roi[,all.sce_roi$DX.name!="Control"&
+                                          all.sce_roi$DX.name=="Adenocarcinoma"|
+                                          all.sce_roi$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+tdat <- tdat[tdat$Phenotype!="normal"&tdat$Phenotype!="hypoxic",]
+tdat <-tdat %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(freq = n / sum(n))
+tdat[is.na(tdat)] <- 0
+tdat$Phenotype <-droplevels(tdat$Phenotype)
+tdat$RoiID <-droplevels(tdat$RoiID)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("RoiID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+#tdat_wide <-tdat_wide[!tdat_wide$RoiID%in% neoadj_pat$RoiID,]
+rownames(tdat_wide)<-tdat_wide$RoiID
+
+library(corrplot)
+cor(tdat_wide[,-1], method="pearson")
+#corrplot(cor(tdat_wide[,-1], method="pearson"), col=rev(brewer.pal(10,"RdBu")))
+
+sig <- cor.mtest(tdat_wide[,-1], conf.level = .95) #is this test right?
+
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+         col=rev(brewer.pal(10,"RdBu")),
+         pch.col = "white",
+         #type="upper",
+         title = "Correlated ratios of All celltype proportions",
+        mar=c(0,0,3,0))
+
+pdf(file=file.path(plot_folder, "All cellSUB_proportion_corrplot.pdf"), width=6, height=6)
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         type="lower",
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+        #col=rev(brewer.pal(8,"RdBu")),
+        col=rev(COL2('RdBu', 8)),
+        method="square",
+         pch.col = "white",
+         #type="upper",
+        # title = "Correlation of CAF type proportions",
+        mar=c(0,0,3,0))
+dev.off()
+```
+
+
+
+#abundance testing caf types 
+
+
+#Differential abundance analysis loop   
+```{r  Differential Abundance Analysis Types over Metastasis, fig.width=6, fig.height=4, warning=F, message=F,echo=F, out.width="50%"}
+#Patient Number must be numeric
+library(tidyr)
+#groupId must be factor
+#t <-as.data.frame(table(fibro[,fibro$CAF_Type!="undefined"]$Patient_ID,factor(fibro[,fibro$CAF_Type!="undefined"]$CAF_Type)))
+#  colnames(t)<-c("Patient_ID","Phenotype","n")
+ # t$Phenotype <-factor(t$Phenotype)
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion.csv"))
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_lo_density.csv"))
+
+df$X <-NULL
+  
+colData(all.sce_pat.roi)<-as.data.frame(colData(all.sce_pat.roi)) %>% 
+  group_by(Patient_ID) %>% mutate(NR=cur_group_id()) %>% DataFrame()
+dat <-as_tibble(colData(all.sce_pat.roi))
+
+colData(all.sce)<-as.data.frame(colData(all.sce)) %>% 
+  group_by(Patient_ID) %>% mutate(NR=cur_group_id()) %>% DataFrame()
+dat <-as_tibble(colData(all.sce))
+#if necessary: change group_id labels
+
+dat <-left_join(dat, df, by="Patient_ID")
+#clinical.data$NR <-c(1:length(unique(clinical.data$Patient_ID)))
+#dat <-merge(t,clinical.data,by="Patient_ID")
+dat <-dat[dat$DX.name=="Adenocarcinoma" | dat$DX.name=="Squamous cell carcinoma",]
+#dat$LN.Met <- ifelse(dat$N ==0, "No LN Metastases", "LN Metastases")
+#dat$Dist.Met <- ifelse(dat$M.new ==0, "No Dist. Metastases", "Dist. Metastases")
+#dat$NeoAdj <- ifelse(dat$Radio==1 |dat$Chemo==1, "NeoAdjuvantTherapy", "NoNeoAdjuvantTherapy")
+
+#Only for grade
+#dat <-dat[dat$Grade=="2" | dat$Grade=="3",]
+#category <-"Grade"
+#dat<-dat %>% drop_na(Grade)
+
+#proportions
+caf_groups <- colnames(df[,-1])
+#density
+#caf_groups <- colnames(df[,-13])
+category <-c("Gender","Relapse","Chemo","Dist.Met","LN.Met",caf_groups)
+category <- caf_groups
+#group_id <-c("M.new")
+#dat$group_id <-ifelse(dat$M.new ==0, 0,1)
+#dat[[group_id]] <-as.factor(dat[[group_id]])
+
+#define the naming category aka Phenotype
+
+#dat<-dat %>% drop_na(paste(group_id))
+j <-"cell_subtype"
+
+plot_list <- list()
+for (i in category) {
+  #for(k in unique(dat$DX.name)){
+   # dat.l <-subset(dat, DX.name==k)
+
+dat.l <-dat
+k="both tumour types"
+dat.l$group_id <-as.factor(dat.l[[i]])
+dat.l<-dat.l %>% drop_na(paste(i))
+
+test <- dat.l %>% select(c("NR",j,"group_id"))
+#colnames(test) <-c("NR", "Phenotype","group_id")
+
+test_wide <- pivot_wider(test,id_cols=c("NR","group_id"),names_from = paste(j), values_from =paste(j), values_fn = list(cell_subtype=length),names_prefix = "")
+#names(test_wide)[names(test_wide) == "FibroType_1"] <- "FibroType_1 / tCAF"
+#names(test_wide)[names(test_wide) == "FibroType_2"] <- "FibroType_2 / vCAF"
+test_wide
+test_wide[is.na(test_wide)] <- 0
+
+design <- createDesignMatrix(
+  test_wide[,c("NR","group_id")], cols_design = c( "NR","group_id")
+)
+
+contrast <- createContrast(c(rep(0, ncol(design)-1),1))
+data.frame(parameters = colnames(design), contrast)
+
+test_wide_norm <- test_wide %>% select(-c("NR","group_id"))
+#Normalize
+norm_factors <- calcNormFactors(t(test_wide_norm), method = "TMM")
+y <- DGEList(t(test_wide_norm), norm.factors = norm_factors)
+
+#y <- DGEList(t(both[,-c("patient_id","group_id")]))
+y <- estimateDisp(y,design)
+
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, contrast = contrast)
+top <- edgeR::topTags(lrt, n = Inf, adjust.method = "BH", 
+        sort.by = "none")
+t.op <-as.data.frame(top)
+t.op <- tibble::rownames_to_column(t.op, "Neighbour_Cluster")
+
+plot_list[[k]] <-
+ggplot(t.op, aes(reorder(Neighbour_Cluster,logFC), logFC)) +
+  geom_col(aes(fill=PValue<0.05)) +
+  coord_flip() +
+  scale_fill_tableau()+
+  scale_fill_jco()+
+  labs(x="Neighbour_Cluster", y="logFC",
+       title=paste("Phenotypes over",i,k))+
+  theme_bw()+
+  theme(strip.background = element_blank(),
+        panel.background=element_rect(fill='white', colour = 'black'),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.text.y = element_text(size=10),
+        legend.position = "none")
+#plot(p)
+
+# reference = Metastasis
+#ggsave(plot=p, file=file.path(plot_folder, paste("Differential_Abundance_Analysis_Fibro_n_over_",i,".pdf")))
+  #}
+  gridExtra::grid.arrange(grobs = plot_list)
+  
+    #save out in individual pdfs for each variable
+  pdf(file=file.path(plot_folder, paste0("DA_CAF-strat_n_cellSUBtypes_PROP_",i,".pdf")), width=6, height=6)
+  gridExtra::grid.arrange(grobs = plot_list)
+  dev.off()
+}
+
+t.op %>% ggplot(aes(x=logCPM, y=logFC, color=Neighbour_Cluster))+geom_point()+scale_color_tableau()
+t.op %>% ggplot(aes(x=logCPM, y=logFC, color=PValue<0.05))+geom_point()+scale_color_tableau()
+```
+
+
+
+
+#all cell types bar plot proportions and density
+
+## Patients are ordered by hierarchical clustering (euclidian, wards.D2)
+```{r  Fibro category proportions ordered by hierarchical clustering, message=FALSE, warning=FALSE, echo=FALSE}
+tdat <-as.data.frame(table( all.sce[, all.sce$Patient_ID!="Control"&
+                                           all.sce$DX.name=="Adenocarcinoma"|
+                                           all.sce$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                            all.sce[, all.sce$Patient_ID!="Control"&
+                                           all.sce$DX.name=="Adenocarcinoma"|
+                                           all.sce$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("Patient_ID","Phenotype","n")
+tdat <-tdat %>% subset(Phenotype!="normal"&Phenotype!="hypoxic")
+tdat <-tdat %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+tdat[is.na(tdat)] <- 0
+tdat$Phenotype <-droplevels(tdat$Phenotype)
+tdat$Patient_ID <-droplevels(tdat$Patient_ID)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+hc <- hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2")
+tdat_wide$Patient_ID <- factor(tdat_wide$Patient_ID, levels = hc$labels[hc$order])
+tdat$Patient_ID <- factor(tdat$Patient_ID, levels = hc$labels[hc$order])
+
+tdat_wide
+```
+
+```{r  survival data Fibro category proportions high-low, message=FALSE, warning=FALSE, echo=FALSE}
+tdat_wide_ct <- left_join(tdat_wide, clinical.data, by="Patient_ID")
+
+neoadj_pat <- clinical.data %>% filter(NeoAdj == "NeoAdjuvantTherapy") %>% select(Patient_ID) 
+surv_dat <-as.data.table(tdat_wide_ct)
+surv_dat<- surv_dat[is.na(surv_dat$OS) !=T,]
+
+# Censoring for OS (1 = event (death due to disease), 0 = censored)
+surv_dat[,censoringOS := 0]
+surv_dat[Ev.O == 1,censoringOS := 1]
+
+# Censoring for disease free survival (1 = event (recurrence), 0 = censored)
+surv_dat[ ,censoringDFS := 0]
+surv_dat[ OS > DFS, censoringDFS := 1]
+surv_dat$censoringDFS <-as.numeric(as.character(surv_dat$censoringDFS))
+
+surv_dat <-surv_dat[surv_dat$DX.name=="Adenocarcinoma"|surv_dat$DX.name=="Squamous cell carcinoma",]
+surv_dat <-surv_dat[!surv_dat$Patient_ID%in% neoadj_pat,]
+
+#high low by median
+surv_dat$Collagen_CAF_G <- ifelse(surv_dat$Collagen_CAF >summary(surv_dat$Collagen_CAF)[3],"Collagen_CAF high","Collagen_CAF low")
+surv_dat$hypoxic_CAF_G <- ifelse(surv_dat$hypoxic_CAF >summary(surv_dat$hypoxic_CAF)[3],"hypoxic_CAF high","hypoxic_CAF low")
+surv_dat$mCAF_G <- ifelse(surv_dat$mCAF >summary(surv_dat$mCAF)[3],"mCAF high","mCAF low")
+surv_dat$SMA_CAF_G <- ifelse(surv_dat$SMA_CAF >summary(surv_dat$SMA_CAF)[3],"SMA_CAF high","SMA_CAF low")
+surv_dat$tpCAF_G <- ifelse(surv_dat$tpCAF >summary(surv_dat$tpCAF)[3],"tpCAF high","tpCAF low")
+surv_dat$iCAF_G <- ifelse(surv_dat$iCAF >summary(surv_dat$iCAF)[3],"iCAF high","iCAF low")
+surv_dat$vCAF_G <- ifelse(surv_dat$vCAF >summary(surv_dat$vCAF)[3],"vCAF high","vCAF low")
+surv_dat$dCAF_G <- ifelse(surv_dat$dCAF >summary(surv_dat$dCAF)[3],"dCAF high","dCAF low")
+surv_dat$hypoxic_tpCAF_G <- ifelse(surv_dat$hypoxic_tpCAF >summary(surv_dat$hypoxic_tpCAF)[3],"hypoxic_tpCAF high","hypoxic_tpCAF low")
+surv_dat$IDO_CAF_G <- ifelse(surv_dat$IDO_CAF >summary(surv_dat$IDO_CAF)[3],"IDO_CAF high","IDO_CAF low")
+surv_dat$PDPN_CAF_G <- ifelse(surv_dat$PDPN_CAF >summary(surv_dat$PDPN_CAF)[3],"PDPN_CAF high","PDPN_CAF low")
+
+surv_dat$Neutrophil_G <- ifelse(surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[3],"Neutrophil high","Neutrophil low")
+surv_dat$Bcell_G <- ifelse(surv_dat$Bcell >summary(surv_dat$Bcell)[3],"B cell high","B cell low")
+surv_dat$Myeloid_G <- ifelse(surv_dat$Myeloid >summary(surv_dat$Myeloid)[3],"Myeloid high","Myeloid low")
+surv_dat$CD4_G <- ifelse(surv_dat$CD4 >summary(surv_dat$CD4)[3],"CD4 high","CD4 low")
+surv_dat$CD4_Treg_G <- ifelse(surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[3],"CD4 Treg high","CD4 Treg low")
+surv_dat$CD4_IDO_G <- ifelse(surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[3],"CD4 IDO high","CD4 IDO low")
+surv_dat$CD4_PD1_G <- ifelse(surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[3],"CD4 PD1 high","CD4 PD1 low")
+surv_dat$CD4_TCF_G <- ifelse(surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[3],"CD4 TCF1/7 high","CD4 TCF1/7 low")
+surv_dat$CD4_ki67_G <- ifelse(surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[3],"dividing CD4 high","dividing CD4 low")
+
+surv_dat$CD8_IDO_G <- ifelse(surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[3],"CD8 IDO high","CD8 IDO low")
+surv_dat$CD8_TCF_G <- ifelse(surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[3],"CD8 TCF1/7 high","CD8 TCF1/7 low")
+surv_dat$CD8_G <- ifelse(surv_dat$CD8 >summary(surv_dat$CD8)[3],"CD8 high","CD8 low")
+surv_dat$CD8_ki67_G <- ifelse(surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[3],"dividing CD8 high","dividing CD8 low")
+
+#caf_strat <-surv_dat %>% select(contains(c("Patient_ID","_G")))
+#write.csv(caf_strat, file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion.csv"))
+
+surv <-c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G","Bcell_G","Neutrophil_G","Myeloid_G","CD8_G","CD4_G","CD4_Treg_G","CD4_IDO_G","CD4_PD1_G","CD4_TCF_G","CD4_ki67_G", "CD8_IDO_G","CD8_TCF_G","CD8_ki67_G")
+```
+
+
+#CoxPH for Fibro category proportions corrected for Stage, Grade and M
+```{r  Coxph Fibro category proportions, echo=F, message=FALSE, warning=FALSE}
+surv_dat
+surv_dat<-surv_dat[!surv_dat$OS == 0, ]
+time <- surv_dat$OS
+status <- surv_dat$censoringOS
+surv_dat$metacluster <-as.factor(surv_dat$metacluster)
+surv_dat$Grade <-as.numeric(surv_dat$Grade)
+rownames(surv_dat) <- surv_dat$Patient_ID
+#res.cox <- coxph(Surv(time, status) ~ metacluster, data = surv_dat)
+#res.cox
+
+
+res.cox <- coxph(Surv(time, status) ~   PDPN_CAF + IDO_CAF+hypoxic_tpCAF+dCAF+vCAF+iCAF+tpCAF+mCAF+hypoxic_CAF+SMA_CAF+Collagen_CAF+Bcell+Blood+CD4+CD4_Treg+CD8+HEV+IDO_CD4+IDO_CD8+ki67_CD4+ki67_CD8+Lymphatic+Myeloid+Neutrophil+PD1_CD4+`TCF1/7_CD4`+`TCF1/7_CD8`+Other+Stage+Grade+M.new, data =  surv_dat)
+
+#res.cox <- coxph(Surv(time, status) ~ `CD4+`+tpCAF+iCAF+mCAF+dCAF+vCAF+`SMA+ CAF`+`IDO+ CAF`+`dividing tpCAF`+`hypoxic CAF`+Grade, data =  surv_dat)
+summary(res.cox)
+
+
+td_res = tidy(res.cox, exponentiate = TRUE)
+td_res = td_res %>% arrange(estimate) %>% mutate(term = factor(term,levels = term))
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.high = log(estimate) + log(std.error))
+
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.low = log(estimate) - log(std.error))
+td_res<-td_res[!td_res$std.error == 0, ]
+td_res <-td_res[td_res$term !="Grade"&
+                  td_res$term !="Stage"&
+                  td_res$term !="M.new",]
+library(ggsci)
+p <-ggplot(td_res, aes(y = term, x = log(estimate),color =p.value < 0.05, shape=estimate>1)) +
+geom_point(size = 4) +
+scale_shape_manual(values = c(16, 17))+
+geom_errorbar(aes(xmax = conf.high, xmin = conf.low))+
+scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+#xlim(0,2)+
+geom_vline(xintercept = 0,color = 'black')+
+theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+#scale_colour_tableau()
+  scale_color_jco()+
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+#
+plot(p)
+#ggsave(plot=p, file=file.path(plot_folder, "CoxPH_All_cells_prop_SD.pdf"), width=9, height=3)
+```
+
+#lasso regressed coxph for all cells
+## Lasso-regressed cox-ph model  
+Including clinical parameters, patient metacluster and Fibro categories (CD4 vs CD8) classified as high / low as well as the proportion (continuous).   
+```{r  coxph Fibro subtype proportions, message=FALSE, warning=FALSE, echo=FALSE, fig.width=8, fig.height=6}
+surv_dat$metacluster <-as.numeric(surv_dat$metacluster)
+fd_test <- fastDummies::dummy_cols(surv_dat, select_columns = c(paste(surv),"Typ","Grade","T.new","N","M.new","Stage","Smok","Gender", "metacluster")) #
+
+fd_test<-fd_test[!fd_test$OS == 0, ]
+time <- fd_test$OS
+status <- fd_test$censoringOS
+
+rownames(fd_test) <- fd_test$Patient_ID
+
+fd_test <-fd_test %>%select(-c(paste(surv),"metacluster",colnames(clinical.data),contains("censor"))) #))
+
+fd_test[is.na(fd_test)] <- 0
+fd_test_matrix <-data.matrix(fd_test)
+
+#determine lambda
+cv.fit <- cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+fit <- glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+#plot(cv.fit)
+#cv.fit$lambda.min
+
+#loop to determine optimal lambda for lasso regression
+MSEs <- NULL
+for (i in 1:100){
+                 cv <-  cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+                 MSEs <- cbind(MSEs, cv$cvm)
+             }
+  rownames(MSEs) <- cv$lambda
+  lambda.min <- as.numeric(names(which.min(rowMeans(MSEs))))
+
+#coef(fit, s = lambda.min)
+Coefficients <- coef(fit, s = lambda.min)
+Active.Index <- which(Coefficients != 0)
+Active.Coefficients <- Coefficients[Active.Index]
+#Coefficients
+
+#correrct
+
+
+df <-Coefficients %>% as.data.frame 
+df$Coefficients <- rownames(df)
+colnames(df) <- c("Predictor","Coefficient")
+df <-df[df$Predictor !=0,]
+
+na_td_res <- df[-grep("NA",df$Coefficient),]
+
+p <-ggplot(na_td_res, aes(x = reorder(Coefficient,Predictor), y = Predictor, color=Predictor >0)) +
+geom_point(size = 4) +
+#geom_errorbar(aes(ymax = conf.high, ymin = conf.low))+
+#scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+geom_hline(yintercept = 0,color = 'black')+
+theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  geom_segment(aes(y = 0, 
+                   x = Coefficient, 
+                   yend = Predictor, 
+                   xend = Coefficient), 
+               color = "black") +
+scale_colour_jco()+
+  ylim(-15,5)
+p
+########
+active_coefficients <- Coefficients[,1] != 0
+x <- fd_test_matrix[,active_coefficients]
+x <- data.frame(x)
+
+vct <-colnames(x)
+coxdf<-coxph(Surv(time,status)~.,data=x)
+
+td_res = tidy(coxdf, exponentiate = TRUE)
+td_res = td_res %>% arrange(estimate) %>% mutate(term = factor(term,levels = term))
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.high = estimate + std.error)
+
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.low = estimate - std.error)
+td_res<-td_res[!td_res$std.error == 0, ]
+na_td_res <- td_res[-grep("NA",td_res$term),]
+
+
+p <-ggplot(na_td_res, aes(x = term, y = estimate,color =p.value < 0.05)) +
+geom_point(size = 4) +
+geom_errorbar(aes(ymax = conf.high, ymin = conf.low))+
+scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+geom_hline(yintercept = 1,color = 'black')+
+theme_bw()+
+scale_colour_tableau()+
+  xlim(-10,10)
+plot(p)
+ggsave(file=file.path(plot_folder, paste("CoxPH_Lasso_allcelltypes_prop.pdf")), width=8, height=6, plot=p)
+
+ggforest(coxdf, data =  (fd_test %>% select(-contains("NA"))))
+
+
+#pdf(file=file.path(plot_folder,paste("COX_selectedFactors_glmnet.pdf")))
+#ggforest(coxdf, data = fd_test)
+#dev.off()
+```
+
+
+```{r  Barplot Fibro category proportions, message=FALSE, warning=FALSE, echo=FALSE, fig.width=12, fig.height=6}
+#Barplot proportions ordered by
+pp <-ggplot(tdat,aes(x=freq, y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+scale_fill_manual(values=as.vector(glasbey(31)))
+#plot(p)
+##ggsave(plot=p, file=file.path(plot_folder, paste("Barplot_Tcell-Category_over_FILTEREDpatients_ordered-hc.pdf")), width=6, height=6)
+
+#dendrogram coloured by metacluster
+ggdend <-hc%>% as.dendrogram() %>% dendextend::set("branches_k_color", k =9) %>%  as.ggdend()
+pp1 <-ggplot(ggdend, labels = F)+scale_x_continuous(expand = c(0, 0))+
+  theme_void()+
+  coord_flip()+
+  scale_y_reverse()
+
+#n
+pp2<-ggplot(tdat,aes(x=n, y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+scale_fill_manual(values=as.vector(glasbey(31)))+theme(
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.y=element_blank())
+#pplt <-pp1+
+ # pp+theme(legend.position = "none", axis.text.y=element_blank(),
+   #     axis.ticks.y=element_blank(),
+    #    axis.title.y=element_blank())+
+ # pp2
+#  p
+
+plot(pplt)
+#ggsave(plot=plt, file=file.path(plot_folder, paste("Barplot_n_hc_CAF_type_proportions.pdf")), width=12, height=6)
+```
+
+```{r,}
+tdat <-as.data.frame(table(all.sce[,all.sce$Patient_ID!="Control"&
+                                          all.sce$DX.name=="Adenocarcinoma"|
+                                          all.sce$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           all.sce[,all.sce$Patient_ID!="Control"&
+                                          all.sce$DX.name=="Adenocarcinoma"|
+                                          all.sce$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=all.sce$RoiID,
+                                "Area"=all.sce$Area_px_Core,
+                                "Patient_ID"=all.sce$Patient_ID,
+                                "DX.name"=all.sce$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Patient_ID) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+  tdat <-tdat %>% 
+  group_by(Patient_ID,Phenotype) %>%
+  summarise(across(-c(RoiID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+  #t <-merge(t, clinical.data, by="Patient_ID")
+
+  #remove super high density outliers (total density >10000)  
+ # tdat <-tdat[ !tdat$Patient_ID%in%surv_excl,]
+
+#CAF type distribution over all patients
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+
+#hc <- hclust(dist(tdat_m[,-1]),"ward.D2")
+#order Patients after clustering results
+tdat_wide$Patient_ID <- factor(tdat_wide$Patient_ID, levels = labels(hc))
+tdat$Patient_ID <- factor(tdat$Patient_ID, levels = labels(hc))
+
+#tdat_wide <-tdat_wide[ !tdat_wide$Patient_ID%in%surv_excl,]
+
+```
+
+## Barplot showing absolute density per patietn coloured by Fibro category together with hierarchical clustering tree coloured by patient metaclusters.
+```{r Barolot Fibro category densities, fig.width=12, fig.height=6, message=FALSE, warning=FALSE, echo=FALSE}
+#barolot (sqrt of density)
+p <-ggplot(tdat,aes(x=sqrt(density),y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+
+    theme(legend.position="bottom")+scale_fill_manual(values=as.vector(glasbey(31)))
+
+#barplot total density
+#p <-ggplot(tdat,aes(y=density,x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+scale_fill_manual(values=as.vector(glasbey(31)))+
+ #   theme(legend.position="bottom")#+theme(legend.position = "none")
+
+
+#coloured dendrogram
+ggdend <-hc%>% as.dendrogram() %>% dendextend::set("branches_k_color", k = 8) %>% as.ggdend()
+p1 <-ggplot(ggdend, labels = F)+scale_x_continuous(expand = c(0, 0))+
+  theme_void()
+pg <-plot_grid(p1,p, align="v", ncol=1)
+pg
+##ggsave(plot=pg, file=file.path(plot_folder, paste("Barplot_Tcell-Category-Densities_HC_ordered_dendro.pdf")), width=12, height=6)
+
+pplt <-#pp1+
+  pp+theme(legend.position = "none", axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.y=element_blank())+
+ # pp2
+  p+theme(axis.ticks.y=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank()
+        )
+plot(pplt)
+ggsave(plot=pplt, file=file.path(plot_folder, "BARchart_all_cells_prop-and-density.pdf"), width=6, height=8)
+```

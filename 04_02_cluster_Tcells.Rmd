@@ -1,0 +1,556 @@
+---
+title: "R Notebook - Cluster T cells"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, import libraries, message=F, echo=F, warning=F}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(stringr)
+library(DT)
+library(dplyr)
+library(tidyr)
+library(mclust)
+library(ggplot2)
+library(RColorBrewer)
+library(scater)
+library(Rphenoannoy)
+set.seed(101100)
+```
+
+
+```{r, Set wd and load data}
+#set working directory 
+wd <-dirname(getwd())
+
+data_folder <-(file.path(wd,"sce_objects","immune","Tcell"))
+
+#RAW
+#all.tcell <- readRDS(file=file.path(data_folder, "tcells_RAW.rds"))
+
+#workingfile
+all.tcell <- readRDS(file=file.path(data_folder, "all_tcell_workingfile.rds"))
+#saveRDS(all.tcell, file=file.path(data_folder, "all_tcell_workingfile.rds"))
+```
+
+
+```{r, Define tcell markers, echo=F, warning=F, message=FALSE}
+all.marker <-rownames(all.tcell)
+
+bad.marker <- c("Iridium_191","Iridium_193","Cadherin-6","Histone H3") 
+good.marker <- all.marker[!all.marker %in% bad.marker]
+btcell.marker <-c("CD20","Indoleamine 2- 3-dioxygenase (IDO)","CD3" ,"TCF1/TCF7" ,"FOXP3","CD45RA + CD45R0","CD8a","CD4"  ,"Ki-67","CD279 (PD-1)") #to kick out final B cells from merge cluster
+
+tcell.marker <-c("Indoleamine 2- 3-dioxygenase (IDO)","CD3" ,"TCF1/TCF7" ,"FOXP3","CD45RA + CD45R0","CD8a","CD4"  ,"Ki-67","CD279 (PD-1)")
+
+print(tcell.marker)
+```
+
+```{r, subset tcell all, message=F, echo=F, warning=F, eval=F}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(all.tcell)), all.tcell$Tma_ac)
+length(unique(all.tcell$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+all.tcell.sub <- all.tcell[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(all.tcell.sub))[2]/dim(assay(all.tcell))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  all.tcell.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(all.tcell.sub, file=file.path(data_folder, paste("all_tcell_sub.rds")))
+```
+
+```{r, load subset all tcells, message=FALSE, warning=FALSE, echo=FALSE}
+all.tcell.sub <- readRDS(file=file.path(data_folder, paste("all_tcell_sub.rds")))
+```
+
+```{r, calculate umap all tcells, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,50,100)
+p=50
+for(i in p){
+all.tcell.sub <- runUMAP(all.tcell.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(all.tcell.sub, file=file.path(data_folder, paste("all_tcell_sub.rds")))
+
+}
+saveRDS(all.tcell.sub, file=file.path(data_folder, paste("all_tcell_sub.rds")))
+
+
+for(i in p){
+all.tcell.sub <- runTSNE(all.tcell.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("tSNE_p", i),
+                 #use_dimred="PCA_20",
+                 perplexity = i)
+saveRDS(all.tcell.sub, file=file.path(data_folder, paste("all_tcell_sub.rds")))
+}
+```
+
+
+**UMAP with good markers**
+```{r,plot umap all t cells immune marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+dat <-as.data.frame(reducedDims(all.tcell.sub)$`UMAP_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.tcell.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% btcell.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+```
+
+**tsne with Tumour markers**
+```{r,plot tsne t cell marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE,eval=F}
+dat <-as.data.frame(reducedDims(all.tcell.sub)$`tSNE_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.tcell.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% good.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+```
+
+
+```{r Clustering all tcell using Rphenoannoy, fig.width=25, fig.height=12 , message=F, echo=F, warning=F, eval=F}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+#marker.clustering <- good.marker[!good.marker %in% "Pan Cytokeratin + Keratin Epithelial"]
+#cellnb <- 250000
+#subsample <-  colnames(sce)[sample(length(colnames(sce)), cellnb)]
+#sce_sub <- sce[, colnames(sce) %in% subsample]
+
+#set ks for clustering
+#i <- 100
+k <- c(20)
+#i<-10
+for (i in k) {
+    all.tcell$RPmembership <- factor(Rphenoannoy(data = t(assay(all.tcell[rownames(all.tcell) %in% immune.marker,],"c_counts_asinh")), k = i)[[2]]$membership)
+    cluster <- paste0("rp_tcell_immune_k",i)
+    cluster <- paste0("rp_tcell_tb_k",i)
+  colnames(colData(all.tcell))[which(names(colData(all.tcell)) == "RPmembership")] <- paste0(cluster)
+  agg_sce <-aggregateAcrossCells(all.tcell, ids=all.tcell[[cluster]], average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+ 
+    scater::plotHeatmap(agg_sce,
+              features = btcell.marker,
+              #features = immune.marker,
+              #features = marker.clustering,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c(cluster),
+              main=paste0("Heatmap tumour cells, ",cluster))
+    
+  #save sce clustering
+  saveRDS(all.tcell, file=file.path(data_folder, "all_tcell_workingfile.rds"))
+}
+#all.tcell <-readRDS( file=file.path(data_folder, "all_tcell_workingfile.rds"))
+
+```
+```{r, add clustering results to subset all t cells, message=F, echo=F, warning=F, eval=F}
+rp_df <- data.frame("CellID"=all.tcell$CellID, "rp_tcell_tb_k20"=all.tcell$rp_tcell_tb_k20)
+
+cur_DF <- as_tibble(colData(all.tcell.sub)) %>% left_join(rp_df, by = "CellID") %>% DataFrame()
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(all.tcell.sub$ImageNumber, all.tcell.sub$CellNumber))
+
+colData(all.tcell.sub) <- cur_DF
+rownames(colData(all.tcell.sub)) <-all.tcell.sub$CellID
+
+```
+
+```{r, plot all t cell sub cluster on umap, message=F, echo=F, warning=F, eval=F}
+cluster <- "rp_tcell_tb_k20"
+p <-plotReducedDim(all.tcell.sub[, all.tcell.sub$rp_tcell_tb_k20==17], "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+plot(p)
+```
+```{r, assign labels, B cells and T cells, message=F, echo=F, warning=F}
+is.bcell <-17
+all.tcell.bcell <- all.tcell[, all.tcell$rp_tcell_tb_k20==17]
+#saveRDS(all.tcell.bcell, file=file.path(data_folder, "tcells_bcells.RDS"))
+
+tcell.final <- all.tcell[, all.tcell$rp_tcell_tb_k20 != 17]
+#saveRDS(tcell.final, file=file.path(data_folder, "tcell_final_workingfile.RDS"))
+
+tcell.final$rp_tcell_immune_k20 <-NULL
+colnames(colData(tcell.final))
+```
+
+
+#################
+#T cells final
+
+```{r, Set wd and load data t cell final, message=F, echo=F, warning=F}
+#set working directory 
+wd <-dirname(getwd())
+
+data_folder <-(file.path(wd,"sce_objects","immune","Tcell"))
+
+#RAW
+tcell.final <- readRDS(file=file.path(data_folder, "tcell_final.RDS"))
+
+#workingfile
+tcell.final <- readRDS(file=file.path(data_folder, "tcell_final_workingfile.rds"))
+#saveRDS(tcell.final, file=file.path(data_folder, "tcell_final_workingfile.rds"))
+
+colnames(colData(tcell.final))
+```
+
+
+```{r, Define tcell markers final, echo=F, warning=F, message=FALSE}
+all.marker <-rownames(tcell.final)
+
+bad.marker <- c("Iridium_191","Iridium_193","Cadherin-6","Histone H3") 
+good.marker <- all.marker[!all.marker %in% bad.marker]
+
+tcell.marker <-c("Indoleamine 2- 3-dioxygenase (IDO)","CD3" ,"TCF1/TCF7" ,"FOXP3","CD45RA + CD45R0","CD8a","CD4"  ,"Ki-67","CD279 (PD-1)")
+
+print(tcell.marker)
+```
+
+```{r, subset tcell final, message=F, echo=F, warning=F, eval=F}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(tcell.final)), tcell.final$Tma_ac)
+length(unique(tcell.final$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+tcell.final.sub <- tcell.final[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(tcell.final.sub))[2]/dim(assay(tcell.final))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  tcell.final.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(tcell.final.sub, file=file.path(data_folder, paste("tcell_final_sub.rds")))
+```
+
+```{r, load subset t cell final, message=FALSE, warning=FALSE, echo=FALSE}
+tcell.final.sub <- readRDS(file=file.path(data_folder, paste("tcell_final_sub.rds")))
+```
+
+```{r, calculate umap t cell final, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,50,100)
+p=50
+for(i in p){
+tcell.final.sub <- runUMAP(tcell.final.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(tcell.final.sub, file=file.path(data_folder, paste("tcell_final_sub.rds")))
+
+}
+saveRDS(tcell.final.sub, file=file.path(data_folder, paste("tcell_final_sub.rds")))
+
+
+for(i in p){
+tcell.final.sub <- runTSNE(tcell.final.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("tSNE_p", i),
+                 #use_dimred="PCA_20",
+                 perplexity = i)
+saveRDS(tcell.final.sub, file=file.path(data_folder, paste("tcell_final_sub.rds")))
+}
+```
+
+
+**UMAP with good markers**
+```{r,plot umap t cell final t cell marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+dat <-as.data.frame(reducedDims(tcell.final.sub)$`UMAP_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(tcell.final.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% good.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+```
+
+
+```{r, Clustering t cell final using Rphenoannoy, fig.width=25, fig.height=12, message=F, echo=F, warning=F, eval=F}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+#marker.clustering <- good.marker[!good.marker %in% "Pan Cytokeratin + Keratin Epithelial"]
+#cellnb <- 250000
+#subsample <-  colnames(sce)[sample(length(colnames(sce)), cellnb)]
+#sce_sub <- sce[, colnames(sce) %in% subsample]
+
+#set ks for clustering
+#i <- 100
+k <- c(35)
+#i<-30
+for (i in k) {
+    tcell.final$RPmembership <- factor(Rphenoannoy(data = t(assay(tcell.final[rownames(tcell.final) %in% tcell.marker,],"c_counts_asinh")), k = i)[[2]]$membership)
+    cluster <- paste0("rp_tcell_k",i)
+  colnames(colData(tcell.final))[which(names(colData(tcell.final)) == "RPmembership")] <- paste0(cluster)
+  agg_sce <-aggregateAcrossCells(tcell.final, ids=tcell.final[[cluster]], average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+ 
+    scater::plotHeatmap(agg_sce,
+              features = tcell.marker,
+              #features = immune.marker,
+              #features = marker.clustering,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c(cluster),
+              main=paste0("Heatmap tumour cells, ",cluster))
+    
+  #save sce clustering
+  saveRDS(tcell.final, file=file.path(data_folder, "tcell_final_workingfile.rds"))
+}
+#tcell.final <-readRDS( file=file.path(data_folder, "all_tcell_workingfile.rds"))
+
+```
+```{r, assign cluster levels T cell final,fig.width=12, fig.height=10, message=F, echo=F, warning=F}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+is.immune <- c(1,9,3)
+is.CD8 <- c(10,20,6,21,12,13,7,5)
+is.CD8.TCF <- c(22,19)
+is.CD8.IDO <- c(17)
+is.CD8.ki67 <- c(2)
+is.CD4.PD1 <-c(23)
+is.CD4.Treg <-c(18)
+is.CD4 <-c(4,11,14)
+is.CD4.ki67 <-c(8)
+is.CD4.TCF <-c(16)
+is.CD4.IDO <-c(15)
+
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.immune] <-"Immune"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD8] <-"CD8"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD8.TCF] <-"TCF1/7_CD8"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD8.IDO] <-"IDO_CD8"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD8.ki67] <-"ki67_CD8"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD4.PD1] <-"PD1_CD4"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD4.Treg] <-"CD4_Treg"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD4] <-"CD4"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD4.ki67] <-"ki67_CD4"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD4.TCF] <-"TCF1/7_CD4"
+tcell.final$TcellType[tcell.final$rp_tcell_k30%in% is.CD4.IDO] <-"IDO_CD4"
+
+agg_sce <-aggregateAcrossCells(tcell.final, ids=tcell.final$rp_tcell_k30, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+ 
+    scater::plotHeatmap(agg_sce,
+              features = tcell.marker,
+              #features = immune.marker,
+              #features = marker.clustering,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c("TcellType"))
+    
+tcell.final.immune <- tcell.final[, tcell.final$TcellType=="Immune"]
+#saveRDS(tcell.final.immune, file=file.path(data_folder, "tcell-final-immune.rds"))
+tcell.final <- tcell.final[, tcell.final$TcellType!="Immune"]
+
+#saveRDS(tcell.final, file=file.path(data_folder, "FINAL_Tcells-minusImmune_RAW.rds"))
+#saveRDS(tcell.final, file=file.path(data_folder, "FINAL_Tcells-minusImmune_workingfile.rds"))
+
+tcell.final$TcellCategory <- ifelse(tcell.final$rp_tcell_k30 %in%is.CD8 |
+                                      tcell.final$rp_tcell_k30 %in%is.CD8.TCF|
+                                      tcell.final$rp_tcell_k30 %in%is.CD8.IDO|
+                                      tcell.final$rp_tcell_k30 %in%is.CD8.ki67,
+                                    "CD8","CD4")
+
+table(tcell.final$TcellCategory)
+table(tcell.final$TcellType)
+```
+
+```{r, subset tcell final minus immune, message=F, echo=F, warning=F, eval=F}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(tcell.final)), tcell.final$Tma_ac)
+length(unique(tcell.final$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+tcell.final.sub <- tcell.final[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(tcell.final.sub))[2]/dim(assay(tcell.final))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  tcell.final.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(tcell.final.sub, file=file.path(data_folder, paste("tcell_final-minusImmune_sub.rds")))
+```
+
+```{r, load subset t cells minus immune, message=FALSE, warning=FALSE, echo=FALSE}
+tcell.final.sub <- readRDS(file=file.path(data_folder, paste("tcell_final-minusImmune_sub.rds")))
+```
+
+```{r, calculate umap t cells minus immune, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,50,100)
+p=50
+for(i in p){
+tcell.final.sub <- runUMAP(tcell.final.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(tcell.final.sub, file=file.path(data_folder, paste("tcell_final-minusImmune_sub.rds")))
+
+}
+saveRDS(tcell.final.sub, file=file.path(data_folder, paste("tcell_final-minusImmune_sub.rds")))
+
+
+for(i in p){
+tcell.final.sub <- runTSNE(tcell.final.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("tSNE_p", i),
+                 #use_dimred="PCA_20",
+                 perplexity = i)
+saveRDS(tcell.final.sub, file=file.path(data_folder, paste("tcell_final-minusImmune_sub.rds")))
+}
+```
+
+
+**UMAP with good markers**
+```{r,plot umap t cell minus immune t cell marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+dat <-as.data.frame(reducedDims(tcell.final.sub)$`UMAP_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(tcell.final.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% tcell.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+```
+
+```{r, plot umap with t cell category and types minus immune, message=F, warning=F, echo=F}
+#Tell Category
+cluster<- "TcellCategory"
+p <-plotReducedDim(tcell.final.sub, "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+plot(p)
+
+#Tell Type
+cluster<- "TcellType"
+p <-plotReducedDim(tcell.final.sub, "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+plot(p)
+```

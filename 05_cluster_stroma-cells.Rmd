@@ -1,0 +1,421 @@
+---
+title: "R Notebook - Analyse Stromal cells"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, import libraries, message=F, echo=F, warning=F}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(stringr)
+library(DT)
+
+library(dplyr)
+library(tidyr)
+library(mclust)
+library(ggplot2)
+library(RColorBrewer)
+library(scater)
+library(Rphenoannoy)
+set.seed(101100)
+```
+
+
+```{r, Set wd and load data all stroma, message=F, echo=F, warning=F}
+#set working directory 
+wd <-dirname(getwd())
+
+data_folder <-(file.path(wd,"sce_objects","stroma"))
+
+#RAW
+#all.stroma <- readRDS(file=file.path(data_folder, "all_stroma_RAW.rds"))
+
+#workingfile
+all.stroma <- readRDS(file=file.path(data_folder, "all_stroma_workingfile.rds"))
+#saveRDS(all.stroma, file=file.path(data_folder, "all_stroma_RAW.rds"))
+
+#saveRDS(all.stroma, file=file.path(data_folder, "all_stroma_workingfile.rds"))
+
+```
+
+
+```{r, Define stroma markers, echo=F, warning=F, message=FALSE}
+all.marker <-rownames(all.stroma)
+
+bad.marker <- c("Iridium_191","Iridium_193","Cadherin-6","Histone H3") 
+good.marker <- all.marker[!all.marker %in% bad.marker]
+stroma.marker <-c("FSP1 / S100A4","SMA","FAP","Cadherin-11","Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                 "VCAM1","Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73","MMP9","p75 (CD271)","CD10","Vimentin","CD248 / Endosialin","PDGFR-b","CD34","CXCL12","CCL21","Ki-67","Caveolin-1","CD146",
+                 "vWF + CD31","LYVE-1" ,  "PNAd"   )
+print(stroma.marker)
+```
+
+```{r, subset all.stroma, message=F, echo=F, warning=F, eval=F}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(all.stroma)), all.stroma$Tma_ac)
+length(unique(all.stroma$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+all.stroma.sub <- all.stroma[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(all.stroma.sub))[2]/dim(assay(all.stroma))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  all.stroma.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(all.stroma.sub, file=file.path(data_folder, paste("all_stroma_sub.rds")))
+```
+
+```{r, load subset, message=FALSE, warning=FALSE, echo=FALSE}
+all.stroma.sub <- readRDS(file=file.path(data_folder, paste("all_stroma_sub.rds")))
+```
+
+```{r, calculate umap all stroma sub, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,50,100)
+p=50
+for(i in p){
+all.stroma.sub <- runUMAP(all.stroma.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(all.stroma.sub, file=file.path(data_folder, paste("all_stroma_sub.rds")))
+
+}
+saveRDS(all.stroma.sub, file=file.path(data_folder, paste("all_stroma_sub.rds")))
+
+
+for(i in p){
+all.stroma.sub <- runTSNE(all.stroma.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("tSNE_p", i),
+                 #use_dimred="PCA_20",
+                 perplexity = i)
+saveRDS(all.stroma.sub, file=file.path(data_folder, paste("all_stroma_sub.rds")))
+}
+```
+
+
+**UMAP with good markers**
+```{r,plot umap all.stroma.sub. good marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+dat <-as.data.frame(reducedDims(all.stroma.sub)$`UMAP_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.stroma.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% good.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+```
+
+**tsne with Tumour markers**
+```{r,plot tsne all stroma sub good marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE, eval=F}
+dat <-as.data.frame(reducedDims(all.stroma.sub)$`tSNE_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.stroma.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% good.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+```
+
+
+```{r Clustering all stroma using Rphenoannoy, fig.width=25, fig.height=12, message=F, echo=F, warning=F, eval=F}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+#marker.clustering <- good.marker[!good.marker %in% "Pan Cytokeratin + Keratin Epithelial"]
+#cellnb <- 250000
+#subsample <-  colnames(sce)[sample(length(colnames(sce)), cellnb)]
+#sce_sub <- sce[, colnames(sce) %in% subsample]
+
+#set ks for clustering
+#i <- 100
+k <- c(20)
+#i<-10
+for (i in k) {
+    all.stroma$RPmembership <- factor(Rphenoannoy(data = t(assay(all.stroma[rownames(all.stroma) %in% good.marker,],"c_counts_asinh")), k = i)[[2]]$membership)
+    cluster <- paste0("rp_stroma_all_k",i)
+  colnames(colData(all.stroma))[which(names(colData(all.stroma)) == "RPmembership")] <- paste0(cluster)
+  agg_sce <-aggregateAcrossCells(all.stroma, ids=all.stroma[[cluster]], average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+ 
+    scater::plotHeatmap(agg_sce,
+              features = good.marker,
+              #features = all.marker,
+              #features = marker.clustering,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c(cluster),
+              main=paste0("Heatmap tumour cells, ",cluster))
+    
+  #save sce clustering
+  saveRDS(all.stroma, file=file.path(data_folder, "all_stroma_workingfile.rds"))
+}
+#all.stroma <-readRDS( file=file.path(data_folder, "all_stroma_workingfile.rds"))
+
+```
+```{r, categorise all stroma clusters, message=F, echo=F, warning=F}
+is.tumour <- c(68)
+is.immune <- c(23,53)
+not.stroma <- c(68,23,53)
+all.stroma.tumour <- all.stroma[, all.stroma$rp_stroma_all_k20 %in% is.tumour]
+all.stroma.immune <- all.stroma[, all.stroma$rp_stroma_all_k20 %in% is.immune]
+all.stroma.final <- all.stroma[, !all.stroma$rp_stroma_all_k20 %in% not.stroma]
+
+#saveRDS(all.stroma.tumour, file=file.path(data_folder, "all_stroma_workingfile_TUMOUR.rds"))
+#saveRDS(all.stroma.immune, file=file.path(data_folder, "all_stroma_workingfile_IMMUNE.rds"))
+#saveRDS(all.stroma.final, file=file.path(data_folder, "FINAL_all_stroma_RAW.rds"))
+#stroma.final <-all.stroma.final
+#rm(all.stroma.final, all.stroma.immune, all.stroma.tumour)
+```
+
+
+
+
+################################################################################################################################
+#carrying on using stroma.final from here
+```{r, read in final stroma, message=F, echo=F, warning=F}
+wd <-dirname(getwd())
+
+data_folder <-(file.path(wd,"sce_objects","stroma"))
+
+#RAW
+#stroma.final <-readRDS(file=file.path(data_folder, "FINAL_all_stroma_RAW.rds"))
+
+#Workingfile
+stroma.final <-readRDS(file=file.path(data_folder, "FINAL_all_stroma_workingfile.rds"))
+
+#saveRDS(stroma.final,file=file.path(data_folder,"FINAL_all_stroma_workingfile.rds"))
+
+stroma.marker <-c("FSP1 / S100A4","SMA","FAP","Cadherin-11","Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                  "VCAM1","Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73","MMP9","p75 (CD271)",
+                  "CD10","Vimentin","CD248 / Endosialin","PDGFR-b","CD34","CXCL12","CCL21","Ki-67","Caveolin-1",
+                  "CD146", "vWF + CD31","LYVE-1" ,  "PNAd" )
+
+```
+
+```{r, subset stroma final, message=F, echo=F, warning=F, eval=F}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(stroma.final)), stroma.final$Tma_ac)
+length(unique(stroma.final$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+stroma.final.sub <- stroma.final[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(stroma.final.sub))[2]/dim(assay(stroma.final))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  stroma.final.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(stroma.final.sub, file=file.path(data_folder, paste("stroma_final_sub.rds")))
+```
+
+```{r, load final stroma subset, message=FALSE, warning=FALSE, echo=FALSE}
+stroma.final.sub <- readRDS(file=file.path(data_folder, paste("stroma_final_sub.rds")))
+```
+
+```{r, calculate umap final stroma, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,50,100)
+p=50
+for(i in p){
+stroma.final.sub <- runUMAP(stroma.final.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(stroma.final.sub, file=file.path(data_folder, paste("stroma_final_sub.rds")))
+
+}
+saveRDS(stroma.final.sub, file=file.path(data_folder, paste("stroma_final_sub.rds")))
+
+
+for(i in p){
+stroma.final.sub <- runTSNE(stroma.final.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("tSNE_p", i),
+                 #use_dimred="PCA_20",
+                 perplexity = i)
+saveRDS(stroma.final.sub, file=file.path(data_folder, paste("stroma_final_sub.rds")))
+}
+```
+
+
+**UMAP with good markers**
+```{r,plot umap final stroma stroma marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+dat <-as.data.frame(reducedDims(stroma.final.sub)$`UMAP_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(stroma.final.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% stroma.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+```
+
+```{r Clustering stroma final,using Rphenoannoy, fig.width=25, fig.height=12, message=F, echo=F, warning=F, eval=F}
+stroma.final$rp_stroma_all_k20 <-NULL
+stroma.final$`rp_stroma_all-stroma-marker_k20` <-NULL
+stroma.final$`rp_NONtumour-final_k35` <-NULL
+stroma.final$`rp_NONtumour-final_k40` <-NULL
+
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+#marker.clustering <- good.marker[!good.marker %in% "Pan Cytokeratin + Keratin Epithelial"]
+#cellnb <- 250000
+#subsample <-  colnames(sce)[sample(length(colnames(sce)), cellnb)]
+#sce_sub <- sce[, colnames(sce) %in% subsample]
+
+#set ks for clustering
+#i <- 100
+k <- c(20,25,30,35,40)
+#i<-10
+for (i in k) {
+   # stroma.final$RPmembership <- factor(Rphenoannoy(data = t(assay(stroma.final[rownames(stroma.final) %in% stroma.marker,],"c_counts_asinh")), k = i)[[2]]$membership)
+    cluster <- paste0("rp_stroma_final_k",i)
+ # colnames(colData(stroma.final))[which(names(colData(stroma.final)) == "RPmembership")] <- paste0(cluster)
+  agg_sce <-aggregateAcrossCells(stroma.final, ids=stroma.final[[cluster]], average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+ 
+    scater::plotHeatmap(agg_sce,
+              features = stroma.marker,
+              #features = all.marker,
+              #features = marker.clustering,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c(cluster),
+              main=paste0("Heatmap tumour cells, ",cluster))
+    
+  #save sce clustering
+  #saveRDS(stroma.final,file=file.path(data_folder,"FINAL_all_stroma_workingfile.rds"))
+
+}
+#stroma.final <-readRDS( file=file.path(data_folder, "final_stroma_workingfile.rds"))
+
+```
+
+
+```{r,HM stroma final, fig.width=25, fig.height=12, message=F, echo=F, warning=F}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+is.vessel <- c(40,34,14,22,47,50,31,23,46,49,27,16,32,43,48,11,62,23,61,10)
+
+stroma.final$vessel <- ifelse(stroma.final$rp_stroma_final_k20 %in% is.vessel, "vessel","CAF")
+
+agg_sce <-aggregateAcrossCells(stroma.final, ids=stroma.final$rp_stroma_final_k20, average=TRUE, use_exprs_values="c_counts_asinh_scaled" )
+
+ 
+    scater::plotHeatmap(agg_sce,
+              features = stroma.marker,
+              #features = all.marker,
+              #features = marker.clustering,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c("vessel"))
+    
+stroma.vessel <- stroma.final[, stroma.final$vessel =="vessel"]
+stroma.CAF <- stroma.final[, stroma.final$vessel =="CAF"]
+
+#saveRDS(stroma.vessel, file=file.path(data_folder, "vessel","stroma_final_VESSEL_workingfile.rds"))
+#saveRDS(stroma.vessel, file=file.path(data_folder, "vessel","stroma_final_VESSEL_RAW.rds"))
+
+#saveRDS(stroma.vessel, file=file.path(data_folder,"stroma_final_VESSEL.rds"))
+
+#saveRDS(stroma.CAF, file=file.path(data_folder,"stroma_final_CAF.rds"))
+```

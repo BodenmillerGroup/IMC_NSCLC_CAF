@@ -1,0 +1,641 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, import libraries, echo=F, message=F, warning=F}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(stringr)
+library(DT)
+
+library(dplyr)
+library(tidyr)
+library(mclust)
+library(ggplot2)
+library(RColorBrewer)
+library(scater)
+library(Rphenoannoy)
+set.seed(101100)
+```
+
+
+```{r, Set wd and load data, echo=F, message=F, warning=F}
+#set working directory 
+wd <-dirname(getwd())
+
+data_folder <-(file.path(wd,"sce_objects","stroma","CAF"))
+
+#RAW
+#stroma.fibro<- readRDS(file=file.path(data_folder, "stroma_final_CAF.rds"))
+#vessel.CAF <-readRDS(file=file.path(data_folder, "vessel-CAF.rds"))
+#all.fibro <- readRDS(file=file=file.path(data_folder,"all_fibros_RAW.rds"))
+#workingfile
+all.fibro <- readRDS(file=file.path(data_folder,"all_fibros_workingfile.rds"))
+```
+
+```{r, merge CAFs from vessel, echo=F, message=F, warning=F, eval=F}
+colnames(colData(stroma.fibro))[!colnames(colData(stroma.fibro)) %in%colnames(colData(vessel.CAF))]
+colnames(colData(vessel.CAF))[!colnames(colData(vessel.CAF)) %in%colnames(colData(stroma.fibro))]
+
+vessel.CAF$rp_vessel_all_k15 <-NULL
+vessel.CAF$rp_vessel_all_k20 <-NULL
+vessel.CAF$rp_vessel_vessel_k15 <-NULL
+vessel.CAF$rp_vessel_vessel_k20 <-NULL
+vessel.CAF$rp_vessel_vessel_k30 <-NULL
+vessel.CAF$vesseltype <-NULL
+
+all.fibro <-cbind(stroma.fibro, vessel.CAF)
+
+#saveRDS(all.fibro, file=file.path(data_folder,"all_fibros_RAW.rds"))
+#saveRDS(all.fibro, file=file.path(data_folder,"all_fibros_workingfile.rds"))
+```
+
+```{r, Define stroma markers, echo=F, warning=F, message=FALSE}
+all.marker <-rownames(all.fibro)
+
+bad.marker <- c("Iridium_191","Iridium_193","Cadherin-6","Histone H3") 
+good.marker <- all.marker[!all.marker %in% bad.marker]
+fibro.marker <-c("FSP1 / S100A4","SMA","FAP","Cadherin-11","Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                 "VCAM1","Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73","MMP9","p75 (CD271)","CD10","Vimentin","CD248 / Endosialin","PDGFR-b","CD34","CXCL12","CCL21","Ki-67","Caveolin-1","CD146")
+
+
+print(fibro.marker)
+```
+
+```{r, subset CAF all, echo=F, message=F, warning=F, eval=F}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(all.fibro)), all.fibro$Tma_ac)
+length(unique(all.fibro$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+all.fibro.sub <- all.fibro[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(all.fibro.sub))[2]/dim(assay(all.fibro))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  all.fibro.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("all_fibro_sub.rds")))
+```
+
+```{r, load subset CAF all, message=FALSE, warning=FALSE, echo=FALSE}
+all.fibro.sub <- readRDS(file=file.path(data_folder, paste("all_fibro_sub.rds")))
+all.fibro.sub <- readRDS(file=file.path(data_folder, paste("final_fibro_sub.rds")))
+```
+
+```{r, calculate umap CAF all, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,25,50,75,100)
+#p=50
+for(i in p){
+all.fibro.sub <- runUMAP(all.fibro.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("all_fibro_sub.rds")))
+
+}
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("all_fibro_sub.rds")))
+
+
+for(i in p){
+all.fibro.sub <- runTSNE(all.fibro.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("tSNE_p", i),
+                 #use_dimred="PCA_20",
+                 perplexity = i)
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("all_fibro_sub.rds")))
+}
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("all_fibro_sub.rds")))
+
+```
+
+
+**UMAP with good markers**
+```{r,plot umap CAF all good marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+fibro.marker <-c("FSP1 / S100A4","SMA","FAP","Cadherin-11","Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                 "VCAM1","Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73","MMP9","p75 (CD271)","CD10","Vimentin","CD248 / Endosialin","PDGFR-b","CD34","CXCL12","CCL21","Ki-67","Caveolin-1","CD146")
+
+fibro.marker <-c("FSP1 / S100A4","SMA","FAP","Cadherin-11","Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                 "Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73","CD10","Vimentin","CD248 / Endosialin","PDGFR-b","CD34","Ki-67","Caveolin-1","CD146")
+
+fibro.marker.sub <- c("SMA","FAP","Ki-67","PDGFR-b","CD10","Carbonic Anhydrase IX","CD146","CD73","CD34")
+u.map <-c("UMAP_p10","UMAP_p25","UMAP_p50","UMAP_p75","UMAP_p100")
+
+i="UMAP_p10"
+i = "tSNE_p100"
+for(i in u.map){
+dat <-as.data.frame(reducedDims(all.fibro.sub)[[i]])
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.fibro.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% fibro.marker.sub], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 3)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+ggsave(filename=file.path(plot_folder, paste0("",i,"CAFmarker",".png",sep="")), plot=p, width=8, height=6)
+plot(p)
+
+
+#CAFType
+cluster <- "cell_type"
+p <-plotReducedDim(all.fibro.sub, paste(i), colour_by=paste(cluster), point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") +scale_color_d3("category20")# text_by = paste(cluster),text_colour ="black",
+plot(p)
+ggsave(plot=p, file=file.path(plot_folder, paste0("",i,"_CAF_types.png")))
+#CAFSubType
+cluster <- "cell_subtype"
+p <-plotReducedDim(all.fibro.sub, paste(i), colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP")+scale_color_d3("category20") 
+plot(p)
+ggsave(plot=p, file=file.path(plot_folder, paste0("",i,"_CAF_subtypes.png")))
+
+}
+```
+**tsne with good markers**
+```{r,plot umap CAF all good marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+
+t.sne <-c("tSNE_p10","tSNE_p25","tSNE_p50","tSNE_p75","tSNE_p100")
+
+for(i in t.sne){
+dat <-as.data.frame(reducedDims(all.fibro.sub)[[i]])
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.fibro.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% fibro.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+ggsave(filename=file.path(plot_folder, paste0("tSNE_p",i,"CAFmarker",".png",sep="")), plot=p, width=16, height=10)
+plot(p)
+
+
+#CAFType
+cluster <- "cell_type"
+p <-plotReducedDim(all.fibro.sub, paste(i), colour_by=paste(cluster), text_by = paste(cluster),text_colour ="black", point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2", title="tSNE") +scale_color_d3("category20")
+plot(p)
+ggsave(plot=p, file=file.path(plot_folder, paste0("tSNE_",i,"_CAF_types.png")))
+#CAFSubType
+cluster <- "cell_subtype"
+p <-plotReducedDim(all.fibro.sub, paste(i), colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2", title="tSNE")+scale_color_d3("category20") 
+plot(p)
+ggsave(plot=p, file=file.path(plot_folder, paste0("tSNE_p",i,"_CAF_subtypes.png")))
+
+}
+```
+```{r}
+df <- data.frame("CellID"=fibro.sce$CellID,
+                 "CAFtype" =fibro.sce$cell_type,
+                 "CAFsubtype"= fibro.sce$cell_subtype)
+
+cur_DF <- as_tibble(colData(all.fibro.sub)) %>% left_join(df, by = "CellID") %>% DataFrame()
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(all.fibro.sub$ImageNumber, all.fibro.sub$CellNumber))
+
+colData(all.fibro.sub) <- cur_DF
+rownames(colData(all.fibro.sub)) <-all.fibro.sub$CellID
+```
+
+#FLOWSOM clustering
+
+```{r, cluster CAFs using FLOWSOM, echo=F, eval=FALSE, warning=F, message=F, fig.width=15, fig.height=8}
+fibro.marker.cluster <-c("SMA","FAP", "Cadherin-11", "Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                 #"VCAM1",
+                 "Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73",
+                 #"MMP9",
+                 "CD10","Vimentin","CD248 / Endosialin",
+                 #"LYVE-1",
+                 "PDGFR-b","CD34","CXCL12","CCL21","Ki-67",
+                 #"Caveolin-1",
+                 "CD146","PNAd")
+
+
+
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+assay(all.fibro, "exprs")<-assay(all.fibro, "c_counts_asinh")
+
+#run FlowSOM
+re2 <- CATALYST::cluster(all.fibro, features =fibro.marker.cluster, verbose = FALSE, maxK = 50)
+fibro.test <- all.fibro
+fibro.test2 <- all.fibro
+cl <-c(30:45)
+#i <-5
+for (i in cl){
+  #i=35
+  cluster <- paste0("som_",i)
+  fibro.test2[[cluster]] <- as.factor(cluster_ids(re2, paste0("meta",i)))
+  agg_sce <- aggregateAcrossCells(fibro.test2, ids=fibro.test2[[cluster]], average=TRUE, use_exprs_values="c_counts_asinh_scaled")
+#plot Heatmap
+  scater::plotHeatmap(agg_sce,
+              #features = fibro.marker,
+              features=fibro.marker.cluster,
+              exprs_values = "c_counts_asinh_scaled",
+              #symmetric = FALSE,
+              zlim=c(-0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c("ids"),
+              main=paste0("Heatmap Fibros, ",cluster))
+}
+```
+
+**Heatmap fibroblast cluster after FLOWSOM clustering som_30**
+```{r, assign CAF levels, fig.width=15, fig.height=8, echo=F, message=FALSE,warning=FALSE, eval=FALSE}
+fibro.test2 <-readRDS(file=file.path(data_folder,"all_fibros_workingfile.rds"))
+
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+is.HEV <-c(17,10,9)
+is.iCAF.CD248 <-c(6,22,35,44)
+is.vCAF <-c(1,2,3,4,5)
+is.tpCAF.CD10 <-c(8,16)
+is.tpCAF.CD73 <-c(21)
+is.iCAF.CD34 <-c(7,32)
+is.IDO.CAF <-c(13)
+is.mCAF.Col.Cdh <-c(29,19,31)
+is.mCAF.MMP11 <-c(39,14,40,12,11,19)
+is.SMA.CAF <-c(24,27,25,20,18)
+is.Collagen.CAF <-c(37,30,33)
+is.dCAF <-c(28,43)
+is.PDPN.CAF <-c(34,23)
+is.hypox.tpCAF <-c(38,45)
+is.hCAF <-c(46,36,41,42)
+is.other <-c(15,26)
+
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.HEV] <-"HEV"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.iCAF.CD248] <-"iCAF_CD248"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.vCAF] <-"vCAF"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.tpCAF.CD10] <-"tpCAF_CD10"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.tpCAF.CD73] <-"tpCAF_CD73"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.iCAF.CD34] <-"iCAF_CD34"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.IDO.CAF] <-"IDO_CAF"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.mCAF.Col.Cdh] <-"mCAF_Col_Cdh"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.mCAF.MMP11] <-"mCAF_MMP11"
+
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.SMA.CAF] <-"SMA_CAF"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.hypox.tpCAF] <-"hypoxic_tpCAF"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.Collagen.CAF] <-"Collagen_CAF"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.dCAF] <-"dCAF"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.PDPN.CAF] <-"PDPN_CAF"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.hCAF] <-"hypoxic_CAF"
+fibro.test2$CAFsubtype[fibro.test2$som_45 %in% is.other] <-"other"
+
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.HEV] <-"HEV"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.iCAF.CD248] <-"iCAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.vCAF] <-"vCAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.tpCAF.CD10] <-"tpCAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.tpCAF.CD73] <-"tpCAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.iCAF.CD34] <-"iCAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.IDO.CAF] <-"IDO_CAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.mCAF] <-"mCAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.SMA.CAF] <-"SMA_CAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.hypox.tpCAF] <-"hypoxic_tpCAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.Collagen.CAF] <-"Collagen_CAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.dCAF] <-"dCAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.PDPN.CAF] <-"PDPN_CAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.hCAF] <-"hypoxic_CAF"
+fibro.test2$CAFtype[fibro.test2$som_45 %in% is.other] <-"other"
+```
+
+
+```{r, plot HM CAF all, fig.width=15, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+hmcol<-rev(brewer.pal(11,"RdBu"))
+rdylbu <-rev(brewer.pal(11,"RdYlBu"))
+
+#saveRDS(fibro.test2, file=file.path(data_folder,"all_fibros_workingfile.rds"))
+fibro.marker.cluster <-c("SMA","FAP", "Cadherin-11", "Carbonic Anhydrase IX","Collagen I + Fibronectin",
+                 #"VCAM1",
+                 "Indoleamine 2- 3-dioxygenase (IDO)","Podoplanin","MMP11","CD73",
+                 #"MMP9",
+                 "CD10","Vimentin","CD248 / Endosialin",
+                 #"LYVE-1",
+                 "PDGFR-b","CD34","CXCL12","CCL21","Ki-67",
+                 #"Caveolin-1",
+                 "CD146","PNAd")
+i <-45
+cluster <- paste0("som_",i)
+agg_sce <- aggregateAcrossCells(all.fibro[,all.fibro$CAFtype !="other"&all.fibro$CAFtype !="HEV"], ids=all.fibro[,all.fibro$CAFtype !="other"&all.fibro$CAFtype !="HEV"][[cluster]], average=TRUE, use_exprs_values="c_counts_asinh_scaled")
+
+ #plot Heatmap
+scater::plotHeatmap(agg_sce,
+              #features = good.marker,
+              features=fibro.marker.cluster,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(-0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c("CAFtype","CAFsubtype"),
+              main=paste0("Heatmap Fibros, ",cluster))
+
+agg_sce <- aggregateAcrossCells(all.fibro, ids=all.fibro$CAFtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled")
+
+ #plot Heatmap
+scater::plotHeatmap(agg_sce,
+              #features = good.marker,
+              features=fibro.marker.cluster,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(-0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c("CAFtype"),
+              main=paste0("Heatmap Fibros, ",cluster))
+
+agg_sce <- aggregateAcrossCells(all.fibro, ids=all.fibro$CAFsubtype, average=TRUE, use_exprs_values="c_counts_asinh_scaled")
+
+ #plot Heatmap
+scater::plotHeatmap(agg_sce,
+              #features = good.marker,
+              features=fibro.marker.cluster,
+              exprs_values = "c_counts_asinh_scaled",
+              symmetric = FALSE,
+              zlim=c(-0,1),
+              color=rdylbu,
+              sortrowss=FALSE,
+              show_colnames=TRUE,
+              color_columns_by = c("CAFsubtype"),
+              main=paste0("Heatmap Fibros, ",cluster))
+
+table(all.fibro$CAFtype)
+table(all.fibro$CAFsubtype)
+```
+
+
+
+```{r, subset CAF final, message=F, warning=F, echo=F}
+#fibro.test2.PNAd <- fibro.test2[,fibro.test2$CAFtype=="HEV"]
+#fibro.test2.other<- fibro.test2[,fibro.test2$CAFtype=="other"]
+
+fibro.final <- all.fibro[,all.fibro$CAFtype!="HEV"&
+                             all.fibro$CAFtype!="other"]
+
+#saveRDS(fibro.test2.PNAd, file=file.path(data_folder,"all_fibros_workingfile_HEV.rds"))
+
+#saveRDS(fibro.test2.other, file=file.path(data_folder,"all_fibros_workingfile_OTHER.rds"))
+
+#saveRDS(fibro.final, file=file.path(data_folder,"all_fibros_workingfile_FIBROs.rds"))
+
+#saveRDS(fibro.final, file=file.path(data_folder,"FINAL_Fibros.rds"))
+
+```
+
+
+```{r, add clustering results to subset fibro final, message=F, warning=F, echo=F}
+rp_df <- data.frame("CellID"=all.fibro$CellID, "som_45"=all.fibro$som_45)
+rp_df <- data.frame("CellID"=all.fibro$CellID, "CAFtype"=all.fibro$CAFtype, "CAFsubtype"=all.fibro$CAFsubtype)
+
+cur_DF <- as_tibble(colData(all.fibro.sub)) %>% left_join(rp_df, by = "CellID") %>% DataFrame()
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(all.fibro.sub$ImageNumber, all.fibro.sub$CellNumber))
+
+colData(all.fibro.sub) <- cur_DF
+rownames(colData(all.fibro.sub)) <-all.fibro.sub$CellID
+```
+
+```{r, plot UMAP ALL FIBROS types, message=F, warning=F, echo=F, eval=F}
+#cluster <- "som_40"
+#plotReducedDim(all.fibro.sub[, all.fibro.sub$som_40==15], "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+
+#cluster <- "som_45"
+#plotReducedDim(all.fibro.sub, "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+
+#CAFType
+cluster <- "CAFtype"
+plotReducedDim(all.fibro.sub, "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+
+#CAFSubType
+cluster <- "CAFsubtype"
+plotReducedDim(all.fibro.sub, "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+```
+#Fibro final tsne
+```{r, subset CAF all, echo=F, message=F, warning=F, eval=F}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(fibro.sce)), fibro.sce$Tma_ac)
+length(unique(fibro.sce$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+all.fibro.sub <- fibro.sce[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(all.fibro.sub))[2]/dim(assay(fibro.sce))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  all.fibro.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("final_fibro_sub.rds")))
+```
+
+```{r, load subset CAF all, message=FALSE, warning=FALSE, echo=FALSE}
+all.fibro.sub <- readRDS(file=file.path(data_folder, paste("final_fibro_sub.rds")))
+```
+
+```{r, calculate umap CAF all, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,25,50,75,100)
+#p=50
+for(i in p){
+all.fibro.sub <- runUMAP(all.fibro.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("final_fibro_sub.rds")))
+
+}
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("final_fibro_sub.rds")))
+
+
+for(i in p){
+all.fibro.sub <- runTSNE(all.fibro.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("tSNE_p", i),
+                 #use_dimred="PCA_20",
+                 perplexity = i)
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("final_fibro_sub.rds")))
+}
+saveRDS(all.fibro.sub, file=file.path(data_folder, paste("final_fibro_sub.rds")))
+
+```
+
+
+**UMAP with good markers**
+```{r,plot umap CAF all good marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+
+plot_folder <- file.path(data_folder,"plots")
+u.map <-c("UMAP_p10","UMAP_p25","UMAP_p50","UMAP_p75","UMAP_p100")
+
+for( i in u.map){
+dat <-as.data.frame(reducedDims(all.fibro.sub)[[i]])
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.fibro.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% fibro.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+ggsave(filename=file.path(plot_folder, paste0("fibro_sub_fibro-Marker_",i,".png")), plot=p, width=16, height=10)
+plot(p)
+
+
+#CAFType
+cluster <- "cell_type"
+p <-plotReducedDim(all.fibro.sub, paste(i), colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2", title="tSNE") 
+plot(p)
+ggsave(p,file=file.path(plot_folder,paste0( "fibro_sub_",i,"CAFtype.png")) )
+#CAFSubType
+cluster <- "cell_subtype"
+p <-plotReducedDim(all.fibro.sub, paste(i), colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2", title="tSNE") 
+plot(p)
+ggsave(p,file=file.path(plot_folder,paste0( "fibro_sub_",i,"CAFsubtype.png")) )
+
+}
+```
+**tsne with good markers**
+```{r,plot umap CAF all good marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+
+t.sne <-c("tSNE_p10","tSNE_p25","tSNE_p50","tSNE_p75","tSNE_p100")
+
+for(i in t.sne){
+dat <-as.data.frame(reducedDims(all.fibro.sub)[[i]])
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.fibro.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% fibro.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+
+#CAFType
+cluster <- "cell_type"
+p <-plotReducedDim(all.fibro.sub, paste(i), colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2", title="tSNE") 
+plot(p)
+#CAFSubType
+cluster <- "cell_subtype"
+p <-plotReducedDim(all.fibro.sub, paste(i), colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="tSNE-1", y="tSNE-2", title="tSNE") 
+plot(p)
+}
+```
+
+
+
+```{r}
+install.packages("circlize")
+library(circlize)
+origin <- paste0("orig ", sample(c(1:10), 20, replace = T))
+destination <- paste0("dest ", sample(c(1:10), 20, replace = T))
+data <- data.frame(origin, destination)
+
+# Transform input data in a adjacency matrix
+adjacencyData <- with(data, table(origin, destination))
+ 
+# Charge the circlize library
+library(circlize)
+ 
+# Make the circular plot
+chordDiagram(adjacencyData, transparency = 0.5)
+```
+```{r}
+library(scales)
+show_col(pal_d3("category20")(20))
+```
+

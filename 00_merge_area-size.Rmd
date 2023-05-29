@@ -1,0 +1,230 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+wd <- dirname(getwd())
+
+#Set working directory and folder structure
+data_folder <- file.path(wd,'clinical_data')
+
+#set plot folder for results
+plot_folder <- file.path(wd,"results","merged")
+
+set.seed(101100)
+
+```
+
+
+```{r}
+wd <-dirname(getwd())
+
+t86a <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_86A.csv")))
+t86b <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_86B.csv")))
+t86c <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_86C.csv")))
+
+t87a <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_87A.csv")))
+t87b <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_87B.csv")))
+t87c <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_87C.csv")))
+
+t88a <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_88A.csv")))
+t88b <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_88B.csv")))
+t88c <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_88C.csv")))
+
+t175a <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_175A.csv")))
+t175b <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_175B.csv")))
+t175c <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_175C.csv")))
+
+t176a <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_176A.csv")))
+t176b <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_176B.csv")))
+t176c <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_176C.csv")))
+
+t178a <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_178A.csv")))
+t178b <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_178B.csv")))
+t178c <- read.csv(file=file.path(wd,"clinical_data", paste("Resized_AreaMeasurements_Image_178C.csv")))
+
+
+t86a$TMA <- "86A"
+t86b$TMA <- "86B"
+t86c$TMA <- "86C"
+
+t87a$TMA <- "87A"
+t87b$TMA <- "87B"
+t87c$TMA <- "87C"
+
+t88a$TMA <- "88A"
+t88b$TMA <- "88B"
+t88c$TMA <- "88C"
+
+t175a$TMA <- "175A"
+t175b$TMA <- "175B"
+t175c$TMA <- "175C"
+
+t176a$TMA <- "176A"
+t176b$TMA <- "176B"
+t176c$TMA <- "176C"
+
+t178a$TMA <- "178A"
+t178b$TMA <- "178B"
+t178c$TMA <- "178C"
+
+t.area <-rbind(t86a,t86b,t86c,t87a,t87b,t87c,t88a,t88b,t88c,t175a,t175b,t175c,t176a,t176b,t176c,t178a,t178b,t178c)
+t.area$ImageID <- t.area$Metadata_acid
+t.area <- t.area %>% select(c(AreaOccupied_AreaOccupied_StromaBinary,AreaOccupied_AreaOccupied_TumourBinary,AreaOccupied_AreaOccupied_TumourStromaBinary,TMA, ImageID)) #ImageNumber
+
+t.area <-t.area %>% unite("TMA_ImageID", c(TMA, ImageID), remove=T)
+colnames(t.area) <- c("Area_px_Stroma","Area_px_Tumour","Area_px_Core", "TMA_ImageID")
+
+range(t.area$Area_px_Core)/1000000
+hist(t.area$Area_px_Core/1000000)
+summary(t.area$Area_px_Core/1000000)
+t.area.mm <-
+  t.area %>% 
+  dplyr::mutate_at(vars(Area_px_Stroma:Area_px_Core),
+            .funs = funs(. /1000000))
+
+t.area.mm[t.area.mm$Area_px_Core>1,]
+t.area.mm$ImageID <-NULL
+colnames(t.area.mm) <- c("Area_mm_Stroma","Area_mm_Tumour","Area_mm_Core", "TMA_ImageID")
+area <-left_join(t.area, t.area.mm, by="TMA_ImageID")
+
+write.csv(area, file=file.path(data_folder, "area.csv"))
+```
+
+
+```{r}
+colData(roi.sce) <-as.data.frame(colData(roi.sce)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+colData(pat.sce) <-as.data.frame(colData(pat.sce)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+colData(roi.sce) <-as.data.frame(colData(roi.sce)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+colData(roi.pat.sce) <-as.data.frame(colData(roi.pat.sce)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+colData(immune.u1) <-as.data.frame(colData(immune.u1)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+colData(tumour.final) <-as.data.frame(colData(tumour.final)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+
+colData(vessel.sce) <-as.data.frame(colData(vessel.sce)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+colData(vessel.vessel_pat.sce) <-as.data.frame(colData(vessel.vessel_pat.sce)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+
+colData(tumour.final) <-as.data.frame(colData(tumour.final)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+#immune
+immune.o <-immune.final
+immune.final <-immune.o
+colData(immune.final) <-as.data.frame(colData(immune.final)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+dat.sce <- as_tibble(colData(immune.final))
+
+dat.sce<-dat.sce %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE)
+
+dat.sce <-DataFrame(dat.sce)
+dat.sce<-merge(dat.sce, area, by="TMA_ImageID")
+rownames(dat.sce) <-paste(dat.sce$TmaID, dat.sce$TmaBlock, dat.sce$ImageID, dat.sce$CellNumber, sep='_')
+colData(immune.final) <- dat.sce
+colnames(immune.final) <-rownames(dat.sce)
+colData(immune.final)
+colnames(colData(immune.final))
+  
+#tcells
+tcells.o <-tcells.final
+tcells.final <-tcells.o
+colData(tcells.final) <-as.data.frame(colData(tcells.final)) %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE) %>% left_join(area, by="TMA_ImageID") %>% DataFrame()
+
+
+dat.sce <- as_tibble(colData(tcells.final))
+dat.sce$Area_mm_Core <-NULL
+dat.sce$Area_mm_Stroma <-NULL
+dat.sce$Area_mm_Tumour <-NULL
+dat.sce$Area_px_Core <-NULL
+dat.sce$Area_px_Stroma <-NULL
+dat.sce$Area_px_Tumour <-NULL
+dat.sce$TMA_Image <-NULL
+dat.sce<-dat.sce %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE)
+
+dat.sce <-DataFrame(dat.sce)
+dat.sce<-merge(dat.sce, area, by="TMA_ImageID")
+rownames(dat.sce) <-paste(dat.sce$TmaID, dat.sce$TmaBlock, dat.sce$ImageID, dat.sce$CellNumber, sep='_')
+colData(tcells.final) <- dat.sce
+colnames(tcells.final) <-rownames(dat.sce)
+colData(tcells.final)
+colnames(colData(tcells.final))
+
+#tumour
+dat.sce <- as_tibble(colData(tumour))
+
+dat.sce<-dat.sce %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE)
+
+dat.sce <-DataFrame(dat.sce)
+dat.sce<-merge(dat.sce, area, by="TMA_ImageID")
+rownames(dat.sce) <-paste(dat.sce$TmaID, dat.sce$TmaBlock, dat.sce$ImageID, dat.sce$CellNumber, sep='_')
+colData(tumour) <- dat.sce
+colnames(tumour) <-rownames(dat.sce)
+colData(tumour)
+colnames(colData(tumour))
+  
+#fibro
+dat.sce <- as_tibble(colData(fibro.final.new))
+
+dat.sce<-dat.sce %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE)
+
+dat.sce <-DataFrame(dat.sce)
+dat.sce<-merge(dat.sce, area, by="TMA_ImageID")
+rownames(dat.sce) <-paste(dat.sce$TmaID, dat.sce$TmaBlock, dat.sce$ImageID, dat.sce$CellNumber, sep='_')
+colData(fibro.final.new) <- dat.sce
+colnames(fibro.final.new) <-rownames(dat.sce)
+colData(fibro.final.new)
+colnames(colData(fibro.final.new))
+  
+#vessel
+dat.sce <- as_tibble(colData(vessel))
+
+dat.sce<-dat.sce %>% 
+  unite(TMA_ImageID, c(TMA, ImageID), sep = "_", remove = FALSE)
+
+dat.sce <-DataFrame(dat.sce)
+dat.sce<-merge(dat.sce, area, by="TMA_ImageID")
+rownames(dat.sce) <-paste(dat.sce$TmaID, dat.sce$TmaBlock, dat.sce$ImageID, dat.sce$CellNumber, sep='_')
+colData(vessel) <- dat.sce
+colnames(vessel) <-rownames(dat.sce)
+colData(vessel)
+colnames(colData(vessel))
+length(unique(tumour[,tumour$TMA=="88_A"]$ImageID))  
+order(unique(tumour[,tumour$TMA=="88_A"]$ImageID))
+fibro$Area_mm
+```
+
+```{r}
+wd <- dirname(getwd())
+
+#Set working directory and folder structure
+data_folder <- file.path(wd,'TMA_all',"SCE")
+
+
+set.seed(101100)
+
+saveRDS(tumour,file=file.path(data_folder,paste("tumour_sce_merge_minus_ctrl_area.rds")))
+saveRDS(immune,file=file.path(data_folder,paste("immune_sce_merge_minus_ctrl_area.rds")))
+saveRDS(tcells,file=file.path(data_folder,paste("tcells_sce_merge_minus_ctrl_area.rds")))
+saveRDS(fibro,file=file.path(data_folder,paste("fibro_sce_merge_minus_ctrl_area.rds")))
+saveRDS(vessel,file=file.path(data_folder,paste("vessel_sce_merge_minus_ctrl_area.rds")))
+```

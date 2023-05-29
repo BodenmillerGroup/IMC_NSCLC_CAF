@@ -1,0 +1,1701 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r  import libraries, echo=F, warnings=F, message=F}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(ggsci)
+library(stringr)
+library(DT)
+library(dplyr)
+library(tidyr)
+library(mclust)
+library(ggplot2)
+library(RColorBrewer)
+library(scater)
+library(Rphenoannoy)
+library(factoextra)
+library(cluster)
+library(dendextend)
+library(ggthemes)
+library(ggpubr)
+library(dplyr)
+#library(tidyverse)
+library(RColorBrewer)
+library(pals)
+library(qwraps2)
+library(table1)
+library(SingleCellExperiment)
+library(tidyr)
+library(scater)
+library(ggridges)
+library(viridis)
+library(viridisLite)
+library(ggplot2)
+library(data.table)
+library(CATALYST)
+library(gridExtra)
+library(Rphenograph)
+library(ComplexHeatmap)
+library(CATALYST)
+library(scales)
+library(survival)
+library(broom)
+library(pheatmap)
+library(FlowSOM)
+library(Seurat)
+library(Rphenoannoy)
+library(dplyr)
+library(data.table)
+library(ggthemes)
+library(diffcyt)
+library(edgeR)
+library(rstatix)
+library(dendextend)
+library(ggdendro)
+library(dendextend)
+library(FactoMineR)
+library(factoextra)
+library(survminer)
+library(corrplot)
+library(rstatix)
+library(graphics)
+library(cowplot)
+library(cluster)
+library(glmnet)
+library(fastDummies)
+library(ggsci)
+library(FactoMineR)
+library(factoextra)
+set.seed(101100)
+```
+
+```{r}
+wd <-dirname(getwd())
+set.seed(101100)
+```
+
+
+```{r load data objects, eval=F, echo=F}
+tcell.pat.roi <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/immune/Tcell/Tcell_sce_pat_roi_rem.rds")
+fibro.pat.roi <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/stroma/CAF/Fibro_sce_pat_roi_rem.rds")
+immune.pat.roi <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/immune/Immune_sce_pat_roi_rem.rds")
+vessel.pat.roi <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/stroma/vessel/vessel_sce_pat_roi_rem.rds")
+tumour.pat.roi <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/Tumour/Tumour_sce_pat_roi_rem.rds")
+```
+
+```{r merge objects, eval=FALSE, echo=F}
+colnames(colData(tcell.pat.roi))
+colnames(colData(fibro.pat.roi))
+colnames(colData(immune.pat.roi))
+
+colnames(colData(vessel.pat.roi))
+colnames(colData(tumour.pat.roi))
+
+fibro.pat.roi$cell_subtype <- fibro.pat.roi$cell_type
+all.pat.roi <-cbind(tcell.pat.roi,fibro.pat.roi,immune.pat.roi)
+
+vessel.pat.roi$cell_category <-"Vessel"
+vessel.pat.roi$cell_type <- vessel.pat.roi$vessel_type
+vessel.pat.roi$cell_subtype <- vessel.pat.roi$vessel_type
+vessel.pat.roi$vessel_type <-NULL
+vessel.pat.roi$rp_vessel_all_k50 <-NULL
+vessel.pat.roi$rp_vessel_all_k50.1 <-NULL
+reducedDim(vessel.pat.roi)<-NULL
+
+tumour.pat.roi$cell_category <-"Tumour"
+tumour.pat.roi$cell_type <- tumour.pat.roi$tumour_type
+tumour.pat.roi$cell_subtype <- tumour.pat.roi$tumour_type
+tumour.pat.roi$tumour_type <-NULL
+
+all.pat.roi <-cbind(tcell.pat.roi,fibro.pat.roi,immune.pat.roi,vessel.pat.roi,tumour.pat.roi)
+saveRDS(all.pat.roi, file=file.path(wd, "sce_objects", "merge_by_category", "all_merge_Tumour_Immune_Tcell_CAF_Vessel_pat-roi-rem.rds"))
+
+all.pat.roi<-readRDS(file=file.path(wd, "sce_objects", "merge_by_category", "all_merge_Tumour_Immune_Tcell_CAF_Vessel_pat-roi-rem.rds"))
+
+all.pat.roi$DX.name[is.na(all.pat.roi$DX.name)]<-"NA"
+all.pat.roi$cell_subtype %>% unique
+```
+
+```{r all together , eval=FALSE, echo=F}
+all.minusTumour <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/merge_minus_Tumour/all_minus_Tumour-Other_CLINICAL-DATA_FILTERED.rds")
+tumour.sce <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/Tumour/FINAL_All_Tumour_clustered.rds")
+
+colnames(colData(tumour.sce))[!colnames(colData(tumour.sce))%in% colnames(colData(all.sce))]
+colnames(colData(all.sce))[!colnames(colData(all.sce))%in% colnames(colData(tumour.sce))]
+
+tumour.sce$cell_type <- tumour.sce$tumour_type
+tumour.sce$cell_subtype <- tumour.sce$tumour_type
+tumour.sce$cell_category <-"Tumour"
+tumour.sce$tumour_type <-NULL
+
+all.sce <- cbind(all.sce, tumour.sce)
+saveRDS(all.sce, file=file.path(data_folder, "FINAL_All_Clustered_FILTERED_inc_tumour_vessel_immune_CAF_minusOther.rds"))
+unique(all.sce$cell_category)
+```
+
+```{r read data}
+
+all.pat.roi<-readRDS(file=file.path(wd, "sce_objects", "merge_by_category", "all_merge_Tumour_Immune_Tcell_CAF_Vessel_pat-roi-rem.rds"))
+
+all.pat.roi$DX.name[is.na(all.pat.roi$DX.name)]<-"NA"
+```
+
+
+
+```{r add T cell subtype, echo=F}
+all.pat.roi$tcell_subtype <-all.pat.roi$cell_subtype
+all.pat.roi$tcell_subtype[all.pat.roi$cell_category=="Fibroblast"] <- all.pat.roi[, all.pat.roi$cell_category=="Fibroblast"]$cell_type
+all.pat.roi$tcell_subtype %>% unique
+
+
+all.sce$tcell_subtype <-all.sce$cell_subtype
+all.sce$tcell_subtype[all.sce$cell_category=="Fibroblast"] <- all.sce[, all.sce$cell_category=="Fibroblast"]$cell_type
+all.sce$tcell_subtype %>% unique
+```
+#Differential abundance analysis loop   
+```{r  Differential Abundance Analysis Types over Metastasis, fig.width=8, fig.height=6, warning=F, message=F,echo=F, out.width="50%"}
+#Patient Number must be numeric
+library(tidyr)
+#groupId must be factor
+#t <-as.data.frame(table(fibro[,fibro$CAF_Type!="undefined"]$Patient_ID,factor(fibro[,fibro$CAF_Type!="undefined"]$CAF_Type)))
+#  colnames(t)<-c("Patient_ID","Phenotype","n")
+ # t$Phenotype <-factor(t$Phenotype)
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion.csv"))
+df$X <-NULL
+  
+colData(all.pat.roi)<-as.data.frame(colData(all.pat.roi)) %>% 
+  group_by(Patient_ID) %>% mutate(NR=cur_group_id()) %>% DataFrame()
+dat <-as_tibble(colData(all.pat.roi))
+#if necessary: change group_id labels
+
+dat <-left_join(dat, df, by="Patient_ID")
+#clinical.data$NR <-c(1:length(unique(clinical.data$Patient_ID)))
+#dat <-merge(t,clinical.data,by="Patient_ID")
+dat <-dat[dat$DX.name=="Adenocarcinoma" | dat$DX.name=="Squamous cell carcinoma",]
+#dat$LN.Met <- ifelse(dat$N ==0, "No LN Metastases", "LN Metastases")
+#dat$Dist.Met <- ifelse(dat$M.new ==0, "No Dist. Metastases", "Dist. Metastases")
+#dat$NeoAdj <- ifelse(dat$Radio==1 |dat$Chemo==1, "NeoAdjuvantTherapy", "NoNeoAdjuvantTherapy")
+
+#Only for grade
+#dat <-dat[dat$Grade=="2" | dat$Grade=="3",]
+#category <-"Grade"
+#dat<-dat %>% drop_na(Grade)
+
+
+caf_groups <- colnames(df[,-1])
+category <-c("Gender","Relapse","Chemo","Dist.Met","LN.Met",caf_groups)
+
+#group_id <-c("M.new")
+#dat$group_id <-ifelse(dat$M.new ==0, 0,1)
+#dat[[group_id]] <-as.factor(dat[[group_id]])
+
+#define the naming category aka Phenotype
+
+#dat<-dat %>% drop_na(paste(group_id))
+j <-"tcell_subtype"
+
+plot_list <- list()
+for (i in category) {
+  #for(k in unique(dat$DX.name)){
+   # dat.l <-subset(dat, DX.name==k)
+
+dat.l <-dat
+k="both tumour types"
+dat.l$group_id <-as.factor(dat.l[[i]])
+dat.l<-dat.l %>% drop_na(paste(i))
+
+test <- dat.l %>% select(c("NR",j,"group_id"))
+#colnames(test) <-c("NR", "Phenotype","group_id")
+
+test_wide <- pivot_wider(test,id_cols=c("NR","group_id"),names_from = paste(j), values_from =paste(j), values_fn = list(tcell_subtype=length),names_prefix = "")
+#names(test_wide)[names(test_wide) == "FibroType_1"] <- "FibroType_1 / tCAF"
+#names(test_wide)[names(test_wide) == "FibroType_2"] <- "FibroType_2 / vCAF"
+test_wide
+test_wide[is.na(test_wide)] <- 0
+
+design <- createDesignMatrix(
+  test_wide[,c("NR","group_id")], cols_design = c( "NR","group_id")
+)
+
+contrast <- createContrast(c(rep(0, ncol(design)-1),1))
+data.frame(parameters = colnames(design), contrast)
+
+test_wide_norm <- test_wide %>% select(-c("NR","group_id"))
+#Normalize
+norm_factors <- calcNormFactors(t(test_wide_norm), method = "TMM")
+y <- DGEList(t(test_wide_norm), norm.factors = norm_factors)
+
+#y <- DGEList(t(both[,-c("patient_id","group_id")]))
+y <- estimateDisp(y,design)
+
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, contrast = contrast)
+top <- edgeR::topTags(lrt, n = Inf, adjust.method = "BH", 
+        sort.by = "none")
+t.op <-as.data.frame(top)
+t.op <- tibble::rownames_to_column(t.op, "Neighbour_Cluster")
+
+plot_list[[k]] <-
+ggplot(t.op, aes(reorder(Neighbour_Cluster,logFC), logFC)) +
+  geom_col(aes(fill=PValue<0.05)) +
+  coord_flip() +
+  scale_fill_tableau()+
+  labs(x="Neighbour_Cluster", y="logFC",
+       title=paste("Phenotypes over",i,k))+
+  theme_bw()+
+  theme(strip.background = element_blank(),
+        panel.background=element_rect(fill='white', colour = 'black'),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.text.y = element_text(size=10))
+#plot(p)
+
+# reference = Metastasis
+#ggsave(plot=p, file=file.path(plot_folder, paste("Differential_Abundance_Analysis_Fibro_n_over_",i,".pdf")))
+  #}
+  gridExtra::grid.arrange(grobs = plot_list)
+  
+    #save out in individual pdfs for each variable
+  #pdf(file=file.path(plot_folder, paste0("DifferentialAbundance_Analysis_Fibro_n_over_",i,".pdf")))
+  #gridExtra::grid.arrange(grobs = plot_list)
+  #dev.off()
+}
+
+t.op %>% ggplot(aes(x=logCPM, y=logFC, color=Neighbour_Cluster))+geom_point()+scale_color_tableau()
+t.op %>% ggplot(aes(x=logCPM, y=logFC, color=PValue<0.05))+geom_point()+scale_color_tableau()
+```
+#Differential abundance analysis loop   
+```{r  Differential Abundance Analysis Types over Metastasis, fig.width=8, fig.height=6, warning=F, message=F,echo=F, out.width="50%"}
+#Patient Number must be numeric
+library(tidyr)
+#groupId must be factor
+#t <-as.data.frame(table(fibro[,fibro$CAF_Type!="undefined"]$Patient_ID,factor(fibro[,fibro$CAF_Type!="undefined"]$CAF_Type)))
+#  colnames(t)<-c("Patient_ID","Phenotype","n")
+ # t$Phenotype <-factor(t$Phenotype)
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion.csv"))
+df$X <-NULL
+  
+colData(all.pat.roi)<-as.data.frame(colData(all.pat.roi)) %>% 
+  group_by(Patient_ID) %>% mutate(NR=cur_group_id()) %>% DataFrame()
+dat <-as_tibble(colData(all.pat.roi))
+#if necessary: change group_id labels
+
+colData(all.sce)<-as.data.frame(colData(all.sce)) %>% 
+  group_by(Patient_ID) %>% mutate(NR=cur_group_id()) %>% DataFrame()
+dat <-as_tibble(colData(all.sce))
+#if necessary: change group_id labels
+
+
+dat <-left_join(dat, df, by="Patient_ID")
+#clinical.data$NR <-c(1:length(unique(clinical.data$Patient_ID)))
+#dat <-merge(t,clinical.data,by="Patient_ID")
+dat <-dat[dat$DX.name=="Adenocarcinoma" | dat$DX.name=="Squamous cell carcinoma",]
+#dat$LN.Met <- ifelse(dat$N ==0, "No LN Metastases", "LN Metastases")
+#dat$Dist.Met <- ifelse(dat$M.new ==0, "No Dist. Metastases", "Dist. Metastases")
+#dat$NeoAdj <- ifelse(dat$Radio==1 |dat$Chemo==1, "NeoAdjuvantTherapy", "NoNeoAdjuvantTherapy")
+
+#Only for grade
+#dat <-dat[dat$Grade=="2" | dat$Grade=="3",]
+#category <-"Grade"
+#dat<-dat %>% drop_na(Grade)
+
+
+caf_groups <- colnames(df[,-1])
+category <-c("Gender","Relapse","Chemo","Dist.Met","LN.Met",caf_groups)
+
+#group_id <-c("M.new")
+#dat$group_id <-ifelse(dat$M.new ==0, 0,1)
+#dat[[group_id]] <-as.factor(dat[[group_id]])
+
+#define the naming category aka Phenotype
+
+#dat<-dat %>% drop_na(paste(group_id))
+j <-"tcell_subtype"
+
+plot_list <- list()
+for (i in category) {
+  #for(k in unique(dat$DX.name)){
+   # dat.l <-subset(dat, DX.name==k)
+
+dat.l <-dat
+k="both tumour types"
+dat.l$group_id <-as.factor(dat.l[[i]])
+dat.l<-dat.l %>% drop_na(paste(i))
+
+test <- dat.l %>% select(c("NR",j,"group_id"))
+#colnames(test) <-c("NR", "Phenotype","group_id")
+
+test_wide <- pivot_wider(test,id_cols=c("NR","group_id"),names_from = paste(j), values_from =paste(j), values_fn = list(tcell_subtype=length),names_prefix = "")
+#names(test_wide)[names(test_wide) == "FibroType_1"] <- "FibroType_1 / tCAF"
+#names(test_wide)[names(test_wide) == "FibroType_2"] <- "FibroType_2 / vCAF"
+test_wide
+test_wide[is.na(test_wide)] <- 0
+
+design <- createDesignMatrix(
+  test_wide[,c("NR","group_id")], cols_design = c( "NR","group_id")
+)
+
+contrast <- createContrast(c(rep(0, ncol(design)-1),1))
+data.frame(parameters = colnames(design), contrast)
+
+test_wide_norm <- test_wide %>% select(-c("NR","group_id"))
+#Normalize
+norm_factors <- calcNormFactors(t(test_wide_norm), method = "TMM")
+y <- DGEList(t(test_wide_norm), norm.factors = norm_factors)
+
+#y <- DGEList(t(both[,-c("patient_id","group_id")]))
+y <- estimateDisp(y,design)
+
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, contrast = contrast)
+top <- edgeR::topTags(lrt, n = Inf, adjust.method = "BH", 
+        sort.by = "none")
+t.op <-as.data.frame(top)
+t.op <- tibble::rownames_to_column(t.op, "Neighbour_Cluster")
+
+plot_list[[k]] <-
+ggplot(t.op, aes(reorder(Neighbour_Cluster,logFC), logFC)) +
+  geom_col(aes(fill=PValue<0.05)) +
+  coord_flip() +
+  scale_fill_tableau()+
+  labs(x="Neighbour_Cluster", y="logFC",
+       title=paste("Phenotypes over",i,k))+
+  theme_bw()+
+  theme(strip.background = element_blank(),
+        panel.background=element_rect(fill='white', colour = 'black'),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.text.y = element_text(size=10))
+#plot(p)
+
+# reference = Metastasis
+#ggsave(plot=p, file=file.path(plot_folder, paste("Differential_Abundance_Analysis_Fibro_n_over_",i,".pdf")))
+  #}
+  gridExtra::grid.arrange(grobs = plot_list)
+  
+    #save out in individual pdfs for each variable
+  #pdf(file=file.path(plot_folder, paste0("DifferentialAbundance_Analysis_Fibro_n_over_",i,".pdf")))
+  #gridExtra::grid.arrange(grobs = plot_list)
+  #dev.off()
+}
+
+t.op %>% ggplot(aes(x=logCPM, y=logFC, color=Neighbour_Cluster))+geom_point()+scale_color_tableau()
+t.op %>% ggplot(aes(x=logCPM, y=logFC, color=PValue<0.05))+geom_point()+scale_color_tableau()
+```
+
+
+
+```{r set up tdat, echo=F}
+cat <- c("Immune","T cell","Fibroblast", "Vessel","Tumour") #"Fibroblast",
+unique(all.pat.roi$cell_category)
+tdat <-data.frame()
+tdat_wide <-data.frame("Patient_ID"=unique(all.pat.roi[,all.pat.roi$DX.name!="Control"&
+                                          all.pat.roi$DX.name=="Adenocarcinoma"|
+                                          all.pat.roi$DX.name=="Squamous cell carcinoma"]$Patient_ID))
+for(i in cat){
+  dat.sce <- all.pat.roi[, all.pat.roi$cell_category== paste(i)]
+  df <-as.data.frame(table(dat.sce[,dat.sce$DX.name!="Control"&
+                                          dat.sce$DX.name=="Adenocarcinoma"|
+                                          dat.sce$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                           dat.sce[,dat.sce$DX.name!="Control"&
+                                          dat.sce$DX.name=="Adenocarcinoma"|
+                                     dat.sce$DX.name=="Squamous cell carcinoma"]$tcell_subtype))
+  colnames(df)<-c("Patient_ID","Phenotype","n")
+  df <-df %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+df[is.na(df)] <- 0
+df$Phenotype <-droplevels(df$Phenotype)
+df$Patient_ID <-droplevels(df$Patient_ID)
+
+tdat <- rbind.data.frame(df, tdat)
+df_wide <- pivot_wider(df,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+  #tdat$Type <- paste(i)
+  
+  tdat_wide <- left_join(tdat_wide,df_wide, by="Patient_ID")
+}
+
+write.csv(tdat_wide, file=file.path(wd,"sce_objects","merge_by_category","RAW_by_Category_tcell_subtype.csv"))
+```
+
+Define clinical data
+```{r clinical data, message=FALSE, warning=FALSE, echo=FALSE}
+#clinical.data <-as.data.frame(colData(immune.sce))
+
+clinical.data <- read.csv(file=file.path(wd,"sce_objects","clinical_data", "clinical_data_ROI_ac_combined_CORRECT.csv"))
+
+clinical.data = clinical.data[!duplicated(clinical.data$Patient_ID),]
+clinical.data$X <-NULL
+clinical.data$X.1 <-NULL
+head(clinical.data)
+clinical.data$TmaBlock <- clinical.data$TMA.x
+clinical.data$TMA <- clinical.data$TMA.y
+clinical.data$TMA.x<-NULL
+clinical.data$TMA.y<-NULL
+
+clinical.data$DX.name[is.na(clinical.data$DX.name)]<-"NA"
+
+```
+
+
+```{r optimal number of clusters proportions ,out.width="50%",echo=FALSE,fig.width=6, fig.height=4, warning=FALSE, message=FALSE}
+#Calculate Proportions
+neoadj_pat <- clinical.data %>% filter(NeoAdj == "NeoAdjuvantTherapy") %>% select(Patient_ID) 
+
+cat <- c("Immune","T cell","Fibroblast","Vessel","Tumour") #"Fibroblast",
+
+tdat <-data.frame()
+tdat_wide <-data.frame("Patient_ID"=unique(all.pat.roi[,all.pat.roi$DX.name!="Control"&
+                                          all.pat.roi$DX.name=="Adenocarcinoma"|
+                                          all.pat.roi$DX.name=="Squamous cell carcinoma"]$Patient_ID))
+for(i in cat){
+  dat.sce <- all.pat.roi[, all.pat.roi$cell_category== paste(i)]
+  df <-as.data.frame(table(dat.sce[,dat.sce$DX.name!="Control"&
+                                          dat.sce$DX.name=="Adenocarcinoma"|
+                                          dat.sce$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                           dat.sce[,dat.sce$DX.name!="Control"&
+                                          dat.sce$DX.name=="Adenocarcinoma"|
+                                     dat.sce$DX.name=="Squamous cell carcinoma"]$tcell_subtype))
+  colnames(df)<-c("Patient_ID","Phenotype","n")
+  df <-df %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+df[is.na(df)] <- 0
+df$Phenotype <-droplevels(df$Phenotype)
+df$Patient_ID <-droplevels(df$Patient_ID)
+
+tdat <- rbind.data.frame(df, tdat)
+df_wide <- pivot_wider(df,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+  #tdat$Type <- paste(i)
+  
+  tdat_wide <- left_join(tdat_wide,df_wide)
+  tdat_wide <- tdat_wide[complete.cases(tdat_wide), ]
+
+}
+
+tdat_wide <-tdat_wide[!tdat_wide$Patient_ID%in% neoadj_pat$Patient_ID,]
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+ 
+hc <- hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2")
+
+
+sbg <-cutree(hc, k=2)
+fviz_cluster(list(data = tdat_wide[,-1], cluster = sbg))
+
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "wss", k.max=30)
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "gap_stat", k.max=30)
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "silhouette", k.max=30)
+
+#install.packages("cluster")
+library(cluster)
+gap_stat <- clusGap(tdat_wide[,-1], FUN = hcut, nstart = 25, K.max = 20, B = 100)
+fviz_gap_stat(gap_stat)
+```
+
+Patients are ordered by hierarchical clustering (euclidian, wards.D2)
+```{r calculate celltype proportions ordered by hierarchical clustering, message=FALSE, warning=FALSE, echo=FALSE}
+#Calculate Proportions
+neoadj_pat <- clinical.data %>% filter(NeoAdj == "NeoAdjuvantTherapy") %>% select(Patient_ID) 
+
+cat <- c("Immune","T cell","Fibroblast","Vessel","Tumour") #"Fibroblast",
+
+tdat <-data.frame()
+tdat_wide <-data.frame("Patient_ID"=unique(all.pat.roi[,all.pat.roi$DX.name!="Control"&
+                                          all.pat.roi$DX.name=="Adenocarcinoma"|
+                                          all.pat.roi$DX.name=="Squamous cell carcinoma"]$Patient_ID))
+for(i in cat){
+  dat.sce <- all.pat.roi[, all.pat.roi$cell_category== paste(i)]
+  df <-as.data.frame(table(dat.sce[,dat.sce$DX.name!="Control"&
+                                          dat.sce$DX.name=="Adenocarcinoma"|
+                                          dat.sce$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                           dat.sce[,dat.sce$DX.name!="Control"&
+                                          dat.sce$DX.name=="Adenocarcinoma"|
+                                     dat.sce$DX.name=="Squamous cell carcinoma"]$tcell_subtype))
+  colnames(df)<-c("Patient_ID","Phenotype","n")
+  df <-df %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+df[is.na(df)] <- 0
+df$Phenotype <-droplevels(df$Phenotype)
+df$Patient_ID <-droplevels(df$Patient_ID)
+
+tdat <- rbind.data.frame(df, tdat)
+df_wide <- pivot_wider(df,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+  #tdat$Type <- paste(i)
+  
+  tdat_wide <- left_join(tdat_wide,df_wide)
+  #tdat_wide$sum <-rowSums(tdat_wide[2:25])
+  tdat_wide <- tdat_wide[complete.cases(tdat_wide), ]
+}
+tdat <- tdat[tdat$Patient_ID %in% tdat_wide$Patient_ID,]
+
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+hc <- hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2")
+tdat_wide$Patient_ID <- factor(tdat_wide$Patient_ID, levels = hc$labels[hc$order])
+
+#tdat <-pivot_longer(tdat_wide,cols=colnames(tdat_wide[2:25]), names_to="Phenotype", values_to="freq" )
+
+tdat$Patient_ID <- factor(tdat$Patient_ID, levels = hc$labels[hc$order])
+
+head(tdat_wide)
+```
+
+**Patient based metaclusters split by metacluster**
+```{r Barplot cell category proportions, message=FALSE, warning=FALSE, echo=FALSE, fig.width=12, fig.height=6}
+#Barplot proportions ordered by
+p <-ggplot(tdat,aes(x=freq, y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_igv()
+#plot(p)
+#ggsave(plot=p, file=file.path(plot_folder, paste("Barplot_Tcell-Category_over_FILTEREDpatients_ordered-hc.pdf")), width=6, height=6)
+
+#dendrogram coloured by metacluster
+ggdend <-hc%>% as.dendrogram() %>% dendextend::set("branches_k_color", k = 20) %>%  as.ggdend()
+p1 <-ggplot(ggdend, labels = F)+scale_x_continuous(expand = c(0, 0))+
+  theme_void()+
+  coord_flip()+
+  scale_y_reverse()
+
+#n
+p2<-ggplot(tdat,aes(x=n, y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_igv()+theme(
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.y=element_blank())
+
+plt <-p1+
+  p+theme(legend.position = "none", axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.y=element_blank())+
+  p2
+plot(plt)
+#ggsave(plot=plt, file=file.path(plot_folder, paste("Barplot_n_hc_Cell-category_proportions.pdf")), width=6, height=6)
+```
+
+```{r merge hc with cell category proportions, message=FALSE, warning=FALSE, echo=FALSE, fig.width=12, fig.height=6}
+#cut dendrogram, add metacluster info to tdat
+ct <-as.data.frame(cutree(hc, k= 20))
+
+colnames(ct)<-"metacluster"
+ct$metacluster <-as.factor(ct$metacluster)
+ct$Patient_ID <- rownames(ct)
+
+tdat_wide_ct <-merge(tdat_wide, ct, by="Patient_ID")
+tdat_wide_ct <- merge(tdat_wide_ct, clinical.data, by="Patient_ID")
+table(tdat_wide_ct$metacluster)
+#split barlot by metacluster
+tdat_ct <-merge(tdat, ct, by="Patient_ID")
+ggplot(tdat_ct,aes(y=freq,x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_igv()+
+    theme(legend.position="bottom")+
+  facet_grid(~ metacluster, scales = "free", space = "free")
+  #theme(legend.position = "none")
+```
+
+
+```{r heatmap metacluster cell category expression proportions, fig.width=12, fig.height=12, echo=F, eval=F}
+tdat_ct
+tdat_ct_w <-tdat_ct %>% pivot_wider(id_cols = "metacluster",names_from = "Phenotype", values_from = "freq",values_fn = mean)
+tdat_ct_w_m <- as.matrix(tdat_ct_w[,-1])
+rownames(tdat_ct_w_m) <-tdat_ct_w$metacluster
+
+pheatmap(scale(t(tdat_ct_w_m)))
+
+pheatmap(t(tdat_ct_w_m))
+```
+
+## All proportions
+```{r proportions high low all, fig.width=15, fig.height=15, message=F, warning=F, echo=F}
+#Proportions
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion.csv"))
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_proportion.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G") #
+plot_list <- list()
+
+
+ac_sqc <- clinical.data[clinical.data$DX.name=="Adenocarcinoma"|clinical.data$DX.name=="Squamous cell carcinoma",]$Patient_ID
+hl_m <- hl_m[hl_m$Patient_ID %in% ac_sqc,]
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% ac_sqc,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(freq~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Proportion")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$freq~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Proportion", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Proportion_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```
+
+
+## Adenocarcinoma Proportions
+```{r Adenocarcinoma proportions strat high low, fig.width=15, fig.height=15, message=F, warning=F, echo=F}
+#Proportions split
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion_Adenocarcinoma.csv"))
+
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_proportion_Adenocarcinoma.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+pat_ac <- clinical.data[clinical.data$DX.name=="Adenocarcinoma",]$Patient_ID
+
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_ac,]
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G") #,"Density_G"
+plot_list <- list()
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_ac,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(freq~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Proportion")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$freq~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Proportion", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Proportion_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```
+
+## Squamous cell carcinoma Proportions
+```{r Squamous cell carcinoma prop, fig.width=15, fig.height=15, message=F, warning=F, echo=F}
+#Proportions
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion_Squamous cell carcinoma.csv"))
+
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_proportion_Squamous cell carcinoma.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+pat_sqc <- clinical.data[clinical.data$DX.name=="Squamous cell carcinoma",]$Patient_ID
+
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_sqc,]
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G") #,"Density_G"
+plot_list <- list()
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_sqc,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(freq~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Proportion")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$freq~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Proportion", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Proportion_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```
+
+
+```{r  Correlations proportions per image CAF types,message=FALSE,warning=FALSE,echo=FALSE,eval=F, fig.width=6, fig.height=6}
+
+cat <- c("Immune","T cell","Fibroblast", "Vessel","Tumour") #"Fibroblast",
+unique(all.pat.roi$cell_category)
+tdat <-data.frame()
+tdat_wide <-data.frame("Patient_ID"=unique(all.pat.roi[,all.pat.roi$DX.name!="Control"&
+                                          all.pat.roi$DX.name=="Adenocarcinoma"|
+                                          all.pat.roi$DX.name=="Squamous cell carcinoma"]$Patient_ID))
+for(i in cat){
+  dat.sce <- all.pat.roi[, all.pat.roi$cell_category== paste(i)]
+  df <-as.data.frame(table(dat.sce[,dat.sce$DX.name!="Control"&
+                                          dat.sce$DX.name=="Adenocarcinoma"|
+                                          dat.sce$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                           dat.sce[,dat.sce$DX.name!="Control"&
+                                          dat.sce$DX.name=="Adenocarcinoma"|
+                                     dat.sce$DX.name=="Squamous cell carcinoma"]$tcell_subtype))
+  colnames(df)<-c("Patient_ID","Phenotype","n")
+  df <-df %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+df[is.na(df)] <- 0
+df$Phenotype <-droplevels(df$Phenotype)
+df$Patient_ID <-droplevels(df$Patient_ID)
+
+tdat <- rbind.data.frame(df, tdat)
+df_wide <- pivot_wider(df,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+  #tdat$Type <- paste(i)
+  
+  tdat_wide <- left_join(tdat_wide,df_wide, by="Patient_ID")
+}
+
+tdat_wide <-tdat_wide[!tdat_wide$RoiID%in% neoadj_pat$RoiID,]
+rownames(tdat_wide)<-tdat_wide$RoiID
+
+library(corrplot)
+cor(tdat_wide[,-1], method="pearson")
+#corrplot(cor(tdat_wide[,-1], method="pearson"), col=rev(brewer.pal(10,"RdBu")))
+
+sig <- cor.mtest(tdat_wide[,-1], conf.level = .95) #is this test right?
+
+corrplot(cor(tdat_wide[,-1], method="pearson"),
+         tl.cex = .7,
+         number.cex = .7,
+         order = "hclust",
+         p.mat = sig$p,
+         insig = "label_sig",
+         tl.col = "black",
+         addrect = 3,
+         tl.srt = 90,
+         sig.level = c(.001, .01, .05),
+         pch.cex = .9,
+         col=rev(brewer.pal(10,"RdBu")),
+         pch.col = "white",
+         #type="upper",
+         title = "Correlated proportions",
+        mar=c(0,0,3,0))
+```
+
+## Density
+
+```{r Calculate densities Fibro category, message=FALSE, warning=FALSE, echo=FALSE}
+tdat <-as.data.frame(table(all.pat.roi[,all.pat.roi$Patient_ID!="Control"&
+                                          all.pat.roi$DX.name=="Adenocarcinoma"|
+                                          all.pat.roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           all.pat.roi[,all.pat.roi$Patient_ID!="Control"&
+                                          all.pat.roi$DX.name=="Adenocarcinoma"|
+                                          all.pat.roi$DX.name=="Squamous cell carcinoma"]$tcell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=all.pat.roi$RoiID,
+                                "Area"=all.pat.roi$Area_px_Core,
+                                "Patient_ID"=all.pat.roi$Patient_ID,
+                                "DX.name"=all.pat.roi$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Patient_ID) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+  tdat <-tdat %>% 
+  group_by(Patient_ID,Phenotype) %>%
+  summarise(across(-c(RoiID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+  #t <-merge(t, clinical.data, by="Patient_ID")
+
+  #remove super high density outliers (total density >10000)  
+ # tdat <-tdat[ !tdat$Patient_ID%in%surv_excl,]
+
+#CAF type distribution over all patients
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+
+#keep only complete cases
+tdat_wide <- tdat_wide[complete.cases(tdat_wide), ]
+
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+
+hc <- hclust(dist(tdat_m[,-1]),"ward.D2")
+#order Patients after clustering results
+tdat_wide$Patient_ID <- factor(tdat_wide$Patient_ID, levels = labels(hc))
+tdat$Patient_ID <- factor(tdat$Patient_ID, levels = labels(hc))
+
+#tdat_wide <-tdat_wide[ !tdat_wide$Patient_ID%in%surv_excl,]
+
+```
+
+```{r merge hc with cell category density, message=FALSE, warning=FALSE, echo=FALSE, fig.width=12, fig.height=6}
+#cut dendrogram, add metacluster info to tdat
+ct <-as.data.frame(cutree(hc, k= 10))
+
+colnames(ct)<-"metacluster"
+ct$metacluster <-as.factor(ct$metacluster)
+ct$Patient_ID <- rownames(ct)
+
+tdat_wide_ct <-merge(tdat_wide, ct, by="Patient_ID")
+tdat_wide_ct <- merge(tdat_wide_ct, clinical.data, by="Patient_ID")
+table(tdat_wide_ct$metacluster)
+#split barlot by metacluster
+tdat_ct <-merge(tdat, ct, by="Patient_ID")
+ggplot(tdat_ct,aes(y=density,x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_igv()+
+    theme(legend.position="bottom")+
+  facet_grid(~ metacluster, scales = "free", space = "free")
+  #theme(legend.position = "none")
+```
+
+```{r heatmap metacluster cell category expression density, fig.width=12, fig.height=12, echo=F}
+tdat_ct
+tdat_ct_w <-tdat_ct %>% pivot_wider(id_cols = "metacluster",names_from = "Phenotype", values_from = "density",values_fn = mean)
+tdat_ct_w_m <- as.matrix(tdat_ct_w[,-1])
+rownames(tdat_ct_w_m) <-tdat_ct_w$metacluster
+
+pheatmap(scale(t(tdat_ct_w_m)))
+
+pheatmap(t(tdat_ct_w_m))
+```
+
+## Barplot showing absolute density per patietn coloured by Fibro category together with hierarchical clustering tree coloured by patient metaclusters.
+```{r Barolot Fibro category densities, fig.width=12, fig.height=6, message=FALSE, warning=FALSE, echo=FALSE}
+#barolot (sqrt of density)
+p <-ggplot(tdat,aes(y=sqrt(density),x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_igv()+
+    theme(legend.position="bottom")#+theme(legend.position = "none")
+
+#barplot total density
+p <-ggplot(tdat,aes(y=density,x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_igv()+
+    theme(legend.position="bottom")#+theme(legend.position = "none")
+
+
+#coloured dendrogram
+ggdend <-hc%>% as.dendrogram() %>% dendextend::set("branches_k_color", k = 8) %>% as.ggdend()
+p1 <-ggplot(ggdend, labels = F)+scale_x_continuous(expand = c(0, 0))+
+  theme_void()
+pg <-plot_grid(p1,p, align="v", ncol=1)
+pg
+#ggsave(plot=pg, file=file.path(plot_folder, paste("Barplot_Tcell-Category-Densities_HC_ordered_dendro.pdf")), width=12, height=6)
+```
+
+## Adenocarcinoma Density
+```{r Adenocarcinoma density strat, fig.width=15, fig.height=15, message=F, warning=F, echo=F}
+#Density
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_density_split_Adenocarcinoma.csv"))
+
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_density_split_Adenocarcinoma.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+pat_ac <- clinical.data[clinical.data$DX.name=="Adenocarcinoma",]$Patient_ID
+
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_ac,]
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G","Density_G") #,"Density_G"
+plot_list <- list()
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_ac,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(density~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = density, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Density")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$density~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = sqrt(density), colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Density", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Density_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```
+
+## Squamous cell carcinoma Density
+```{r Squamous cell carcinoma Density, fig.width=15, fig.height=15, message=F, warning=F, echo=F}
+#Density
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_density_split_Squamous cell carcinoma.csv"))
+
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_density_split_Squamous cell carcinoma.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+pat_sqc <- clinical.data[clinical.data$DX.name=="Squamous cell carcinoma",]$Patient_ID
+
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_sqc,]
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G","Density_G") #,"Density_G"
+plot_list <- list()
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_sqc,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(density~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = density, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Density")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$density~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = sqrt(density), colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Density", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Density_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```
+
+## All Density
+```{r density all strat high low, fig.width=15, fig.height=15, message=F, warning=F}
+#here
+#Density
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_lo_density.csv"))
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_density.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+
+ac_sqc <- clinical.data[clinical.data$DX.name=="Adenocarcinoma"|clinical.data$DX.name=="Squamous cell carcinoma",]$Patient_ID
+hl_m <- hl_m[hl_m$Patient_ID %in% ac_sqc,]
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G","Density_G") #,"Density_G"
+plot_list <- list()
+
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% ac_sqc,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(density~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   stat.test$y.position <-sqrt(stat.test$y.position)
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = sqrt(density), colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Density")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$density~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = sqrt(density), colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Density", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Density_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```
+
+
+
+```{r}
+#proportions
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion_Squamous cell carcinoma.csv"))
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion_Adenocarcinoma.csv"))
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion.csv"))
+
+```
+
+
+## Adenocarcinoma Density
+```{r Adenocarcinoma density strat, fig.width=15, fig.height=15, message=F, warning=F, echo=F}
+#Density
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_density_split_Adenocarcinoma.csv"))
+
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_density_split_Adenocarcinoma.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+pat_ac <- clinical.data[clinical.data$DX.name=="Adenocarcinoma",]$Patient_ID
+
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_ac,]
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G","Density_G") #,"Density_G"
+plot_list <- list()
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_ac,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(density~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = density, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Density")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$density~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = sqrt(density), colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Density", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Density_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```
+
+## Squamous cell carcinoma Density
+```{r Squamous cell carcinoma Density, fig.width=15, fig.height=15, message=F, warning=F, echo=F}
+#Density
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_density_split_Squamous cell carcinoma.csv"))
+
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_density_split_Squamous cell carcinoma.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+pat_sqc <- clinical.data[clinical.data$DX.name=="Squamous cell carcinoma",]$Patient_ID
+
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_sqc,]
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G","Density_G") #,"Density_G"
+plot_list <- list()
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% pat_sqc,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(density~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = density, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Density")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$density~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = sqrt(density), colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Density", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Density_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```
+
+## All Density
+```{r density all strat high low, fig.width=15, fig.height=15, message=F, warning=F}
+#here
+df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_low_proportion.csv"))
+
+#Density
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_lo_density.csv"))
+#df <- read.csv(file=file.path(wd,"patient_strat","CAF_strat_hi_mid_low_density.csv"))
+
+
+df$X <-NULL
+
+hl_m <- left_join(tdat, df, by="Patient_ID")
+
+ac_sqc <- clinical.data[clinical.data$DX.name=="Adenocarcinoma"|clinical.data$DX.name=="Squamous cell carcinoma",]$Patient_ID
+hl_m <- hl_m[hl_m$Patient_ID %in% ac_sqc,]
+
+categories <- c("PDPN_CAF_G","IDO_CAF_G","hypoxic_tpCAF_G","dCAF_G","vCAF_G","iCAF_G","tpCAF_G","SMA_CAF_G","mCAF_G","hypoxic_CAF_G","Collagen_CAF_G","Density_G") #,"Density_G"
+plot_list <- list()
+
+
+for (i in (categories)) {
+hl_m <- left_join(tdat, df, by="Patient_ID")
+hl_m <- hl_m[hl_m$Patient_ID %in% ac_sqc,]
+
+  for (j in unique(hl_m$Phenotype)){
+    df_l<-hl_m
+    df_l[[i]] <-as.factor(df_l[[i]])
+    df_l <-df_l %>% drop_na(i)
+    df_l$i <-as.factor(df_l[[i]])
+    df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+    df_l <-subset(df_l, Phenotype==j)
+
+    if (length(unique(df_l[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- df_l%>%
+     group_by(Phenotype) %>%
+     dunn_test(density~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   stat.test$y.position <-sqrt(stat.test$y.position)
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(df_l, aes(x= .data[[i]], y = sqrt(density), colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_tableau()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Density")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(length(unique(df_l[[i]])) == 2){
+    
+      df_l<-hl_m
+      df_l[[i]] <-as.factor(df_l[[i]])
+      df_l <-df_l %>% drop_na(i)
+      df_l$Phenotype <-droplevels(df_l$Phenotype)
+
+      df_l <-subset(df_l, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- df_l %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(df_l$density~df_l[[i]], paired=F)$p.value)
+      df_l <- merge(df_l, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      df_l$p.wt <- paste0('p=',round(df_l$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(df_l, aes(x= .data[[i]], y = sqrt(density), colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+        scale_color_tableau()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Density", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+#print(categories)
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=6) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("tcell_category_Density_Wo-NeoAdj",i,".pdf")))
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=6)
+ # dev.off()
+}
+```

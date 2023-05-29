@@ -1,0 +1,139 @@
+---
+title: "Prepare clinical data and position data"
+output: html_notebook
+---
+```{r install needed packages}
+#install.packages("zoo")              
+library("zoo")    
+```
+
+```{r Set file structure}
+wd <- (getwd())
+data_folder <- file.path(dirname(wd),'clinical_data')
+```
+
+
+```{r Read in clinical data}
+clinical.data <-read.csv(file=file.path(data_folder, paste("TMA_86_87_88_175_176_178_USZ.csv")))
+```
+
+```{r Read in position files}
+p86 <- read.csv(file=file.path(data_folder, paste("zTMA_86.csv")),header=T, na.strings=c("","NA"))
+p87 <- read.csv(file=file.path(data_folder, paste("zTMA_87.csv")),header=T, na.strings=c("","NA"))
+p88 <- read.csv(file=file.path(data_folder, paste("zTMA_88.csv")),header=T, na.strings=c("","NA"))
+
+p175 <-read.csv(file=file.path(data_folder, paste("zTMA_175.csv")),header=T, na.strings=c("","NA"))
+p176 <-read.csv(file=file.path(data_folder, paste("zTMA_176.csv")),header=T, na.strings=c("","NA"))
+p178 <- read.csv(file=file.path(data_folder, paste("zTMA_178.csv")),header=T, na.strings=c("","NA"))
+```
+
+```{r Add missing patient numbers and ctrls}
+p86$Patient_Nr <-na.locf(p86$Patient_Nr)
+p87$Patient_Nr <-na.locf(p87$Patient_Nr)
+p88$Patient_Nr <-na.locf(p88$Patient_Nr)
+
+p175$Patient_Nr <-na.locf(p175$Patient_Nr)
+p176$Patient_Nr <-na.locf(p176$Patient_Nr)
+p178$Patient_Nr <-na.locf(p178$Patient_Nr)
+```
+
+```{r Add TMA column to position data}
+p86["TMA"] <-"86"
+p87["TMA"] <-"87"
+p88["TMA"] <-"88"
+
+p175["TMA"] <-"175"
+p176["TMA"] <-"176"
+p178["TMA"] <-"178"
+```
+
+```{r merge clinical data and position data}
+clinical.data_pos <-clinical.data
+
+#change Nr. to Patient_Nr
+names(clinical.data_pos)[names(clinical.data_pos) == 'Nr.'] <- 'Patient_Nr'
+
+#combine all position files rowwise
+p_combined <- rbind(p86,p87,p88,p175,p176,p178)
+
+clinical.data_pos <-merge(p_combined, clinical.data_pos, by.x=c("Patient_Nr", "TMA"), by.y=c("Patient_Nr","TMA")) 
+```
+ 
+```{r save combined clincal and position data as csv file}
+#write.csv(clinical.data_pos, file=file.path(data_folder,paste("combined_clinical_position_data.csv")))
+
+clinical.data <- read.csv( file=file.path(data_folder,paste("combined_clinical_position_data.csv")))
+
+table(clinical.data$DX.name)
+clinical.data$DX.name[clinical.data$DX.name == "Adeno-Ca"] <- "Adenocarcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "Adeno-Ca "] <- "Adenocarcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "PE-Ca"] <- "Squamous cell carcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "adenosquam. Ca"] <- "Adeno squamous cell carcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "ASQ"] <- "Adeno squamous cell carcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "Adeno squamous cell carcinoma"] <- "Adeno squamous cell carcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "Adenosquamöses CA"] <- "Adeno squamous cell carcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "Adeno/squamous carcinoma"] <- "Adeno squamous cell carcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "LC"] <- "Large cell carcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "SCC"] <- "Squamous cell carcinoma"
+clinical.data$DX.name[clinical.data$DX.name == "LCNEC"] <- "Large cell neuroendocrine carcinoma"
+
+unique(clinical.data$DX.name)
+#add factor levels
+levels(clinical.data$Gender) <- list(male=1, female=2)
+levels(clinical.data$Grade) <- list("missing"=0,"Grade 1"=1,  "Grade 2"=2,"Grade 3"=3)
+levels(clinical.data$Vessel) <- list("negative"=0, "positive"=1)
+levels(clinical.data$Pleura) <- list("negative"=0, "positive"=1)
+levels(clinical.data$R) <- list("R0"=0, "R1"=1)
+levels(clinical.data$Relapse) <- list("no"=0, "yes"=1)
+levels(clinical.data$Ev.O) <- list("alive"=0, "dead"=1)
+levels(clinical.data$T.new )<- list("1a"=1, "1b"=2,"2a"=3, "2b"=4, "3"=5, "4"=6)
+levels(clinical.data$M.new) <- list("no"=0, "1a"=1, "1b"=2)
+levels(clinical.data$N) <- list("N0"=0, "N1"=1,"N2"=2, "N3"=3)
+
+levels(clinical.data$Stage) <- list("1a"=1, "1b"=2,"2a"=3, "2b"=4, "3a"=5, "3b"=6,"4"=7)
+levels(clinical.data$Chemo) <- list("Neoadjuvant no"=0, "Neoadjuvant yes"=1)
+levels(clinical.data$Radio) <- list("Neoadjuvant no"=0, "Neoadjuvant yes"=1)
+levels(clinical.data$Chemo3) <- list("Adjuvant no"=0, "Adjuvant yes"=1)
+levels(clinical.data$Radio4) <- list("Adjuvant no"=0, "Adjuvant loc"=1, "Other"=2, "Both"=3)
+levels(clinical.data$Chemo3) <- list("Post relapse no"=0, "Post relapse yes"=1)
+levels(clinical.data$Radio6) <- list("Post relapse no"=0, "Post relapse loc"=1, "Post relapse other"=2, "Post relapse both"=3)
+levels(clinical.data$Smok) <- list("no"=0, "currently"=1, "former"=2, "unknown"=3)
+
+cols <- c("TMA","Gender","Typ","Grade","Vessel","Pleura","T.new","N","M.new","Stage","R","Chemo","Radio","Chemo3","Radio4","Relapse","Chemo5","Radio6","DFS","Ev.O" ,"Smok"   )
+clinical.data[cols] <- lapply(clinical.data[cols], as.factor)
+
+head(clinical.data)
+
+clinical.data$ROI <- paste(clinical.data$Grid, clinical.data$x.y.localisation, sep="")
+head(clinical.data$ROI)
+clinical.data$RoiID <-paste(clinical.data$TMA, clinical.data$ROI, sep="_")
+clinical.data$Patient_ID <- paste(clinical.data$TMA, clinical.data$Patient_Nr,sep="_")
+
+
+clinical.data$LN.Met <- ifelse(clinical.data$N ==0, "No LN Metastases", "LN Metastases")
+clinical.data$Dist.Met <- ifelse(clinical.data$M.new ==0, "No Dist. Metastases", "Dist. Metastases")
+clinical.data$NeoAdj <- ifelse(clinical.data$Radio==1 |clinical.data$Chemo==1, "NeoAdjuvantTherapy", "NoNeoAdjuvantTherapy")
+clinical.data$X <-NULL
+clinical.data$TmaBlock <- clinical.data$Grid
+clinical.data$Grid <-NULL
+clinical.data$x.localisation <-NULL
+clinical.data$y.localisation <-NULL
+
+wd <-"/mnt"
+
+data_folder <-(file.path(wd,"lena_processed2","NSCLC_NEW","clinical_data"))
+
+write.csv(clinical.data, file=file.path(data_folder,"clinical_data.csv"))
+```
+
+
+```{r save position files}
+write.csv(p86, file=file.path(data_folder, paste("zTMA_86.csv")))
+write.csv(p87, file=file.path(data_folder, paste("zTMA_87.csv")))
+write.csv(p88, file=file.path(data_folder, paste("zTMA_88.csv")))
+
+write.csv(p175, file=file.path(data_folder, paste("zTMA_175.csv")))
+write.csv(p176, file=file.path(data_folder, paste("zTMA_176.csv")))
+write.csv(p178, file=file.path(data_folder, paste("zTMA_178.csv")))
+```
+

@@ -1,0 +1,255 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(cytomapper)
+data(pancreasSCE)
+data(pancreasImages)
+data(pancreasMasks)
+
+plotPixels(image = pancreasImages, colour_by = c("H3", "CD99", "CDH"))
+
+plotCells(mask = pancreasMasks, object = pancreasSCE,
+            cell_id = "CellNb", img_id = "ImageNb", colour_by = "CD99",
+            outline_by = "CellType")
+
+plotCells(mask = pancreasMasks, object = pancreasSCE,
+            cell_id = "CellNb", img_id = "ImageNb", 
+            colour_by = "CellType")
+```
+
+```{r, fig.width=50, fig.height=50}
+wd <- dirname(getwd())
+wd <-"/mnt/lena_processed2/NSCLC_results"
+path.to.images <-file.path(wd,"cytomapper")
+
+all_masks <- loadImages(path.to.images, pattern = "_mask.tiff")
+all_masks <- loadImages(path.to.images, pattern = "2020115_LC_NSCLC_TMA_86_") 
+mcols(all_masks)$ImageNb <- c("1", "2","5")
+head(unique(as.numeric(all_masks[[1]])))
+all_masks <- scaleImages(all_masks, 2^16-1)
+head(unique(as.numeric(all_masks[[1]])))
+
+
+all_masks_2 <- loadImages(path.to.images, "2020121_LC_NSCLC_TMA_87_A_s0_a1_ac_ilastik_s2_Probabilitiescells_mask.tiff")
+all_masks_2 <- scaleImages(all_masks_2, 2^16-1)
+
+head(unique(as.numeric(all_masks_2[[1]])))
+
+unique(all.cells[, all.cells$RoiID=="86_A_A1,2"]$ImageID)
+
+tma86 <-all.cells[, all.cells$RoiID=="86_A_A1,1"|all.cells$RoiID=="86_A_A1,2"|all.cells$RoiID=="86_A_A1,5"]
+
+tma86 <-sce_86_A[,sce_86_A$acID==1|sce_86_A$acID==2|sce_86_A$acID==5]
+tma86_o <-sce_86A[, sce_86A$ROI==1|sce_86A$ROI==2|sce_86A$ROI==5]
+tma86_o$ImageNb <- tma86_o$ROI
+
+tma87 <-all.cells[, all.cells$RoiID=="87_A_A1,1"]
+
+tma87 <-all.cells[, all.cells$TMA=="87A"]
+
+all.final
+tma86$ImageNb <- tma86$acID
+
+tma87$ImageNb <- tma87$ImageID
+
+mcols(all_masks_2)$ImageNb <- c("1")
+plotCells(mask = all_masks, object = tma86,
+            cell_id = "CellNumber", img_id = "ImageNb",
+            outline_by = "cell_category")
+
+plotCells(all_masks, object = tma86_o,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = c("Pan Cytokeratin + Keratin Epithelial","SMA"),
+            exprs_values = "c_counts_asinh_scaled")
+
+#rownames(colData(tma86)) <- paste(colData(tma86)$TMA, colData(tma86)$ImageID, colData(tma86)$CellNumber, sep="_")
+plotCells(all_masks, object = tma86,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = c("Pan Cytokeratin + Keratin Epithelial","SMA"),
+            exprs_values = "c_counts_asinh_scaled")
+
+plotCells(all_masks, object = tma86,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "CellNumber")
+
+plotCells(all_masks_2, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = c("Pan Cytokeratin + Keratin Epithelial","SMA"),
+            exprs_values = "c_counts_asinh_scaled")
+
+path.to.images <-file.path(wd,"mask")
+path.to.images <-file.path(wd,"cytomapper")
+
+all_masks <- loadImages(path.to.images, pattern = "2020121_LC_NSCLC_TMA_87_A") 
+#mcols(all_masks)$ImageNb <- c("1", "2","3")
+#mcols(all_masks)$ImageNb <- c("138")
+mcols(all_masks)$ImageNb <- c("1" ,"10","100","102", "104","105","106","107","108","109", "11","110","111","112","114","115","116","117","118","119","12","121","122" ,"123", "124" ,"125", "126", "127", "128" ,"129" ,"13" , "130" ,"131" ,"132" ,"133" ,"134" ,"135" ,"137", "138", "14" , "15" , "16" , "17" , "18" , "19"  ,"2"   ,"20"  ,"21"  ,"22"  ,"23" , "24" , "25" , "26" , "27" , "28"  ,"29" , "3"  , "30"  ,"31"  ,"32"  ,"33"  ,"34"  ,"36",  "37" , "38" , "39" , "4" ,  "40"  ,"41" , "42" , "43"  ,"44"  ,"45"  ,"46"  ,"47"  ,"48" , "5"  , "50" , "51" , "52" , "53",  "54"  ,"55"  ,"56" , "57"  ,"58" , "59" , "6"   ,"60" , "61" , "63" , "64"  ,"65" , "66" , "67"  ,"68" , "69" , "7" ,  "70" , "71",  "72" , "73" ,"74"  ,"75" , "76" , "77",  "78" , "79" , "8"  , "80"  ,"81"  ,"82"  ,"83" , "85",  "86" , "87"  ,"88" , "89" , "9"   ,"90"  ,"91" , "92" , "93" ,"94"  ,"95"  ,"96" , "97"  ,"98"  ,"99" )
+#mcols(all_masks)$ImageNb <- c(ac_sub$ImageNb)
+head(unique(as.numeric(all_masks[[1]])))
+all_masks <- scaleImages(all_masks, 2^16-1)
+
+tma87 <-sce_87_A[,sce_87_A$acID==1|sce_87_A$acID==2|sce_87_A$acID==3]
+tma87 <-sce_87_A[,sce_87_A$acID==138]
+tma87 <- all.cells[, all.cells$TMA=="87A"]
+
+tma87 <- all.sce_pat.roi[, all.sce_pat.roi$TMA=="87A"]
+
+tma87 <- all.category[, all.category$TMA=="87A"]
+tma87 <-tma87A
+tma87$ImageNb <- tma87$acID
+
+#tma87 <-sce_87_A
+tma87$ImageNb <- tma87$acID
+pdf(file=file.path("/mnt/lena_processed2/NSCLC_NEW/plots_cytomapper","panCK_SMA expression_87A_allCells_Categorised.pdf"), width=20, height=20)
+p1<-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = c("Pan Cytokeratin + Keratin Epithelial","SMA"),
+            exprs_values = "c_counts_asinh_scaled", return_plot = TRUE)
+dev.off()
+
+pdf(file=file.path("/mnt/lena_processed2/NSCLC_NEW/plots_cytomapper","87A_allCells_Categorised.pdf"), width=20, height=20)
+p2 <-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "cell_category",
+            colour = list(cell_category = c("Tumour"="red","Immune"="blue","T cell"="blue","vessel"="yellow", "Fibroblast"="green", "Other"="pink")), return_plot = TRUE)#, "Other"="white"
+dev.off()
+
+
+tma87$mclust <-factor(tma87$mclust)
+plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "mclust",
+            colour = list(mclust = c("1" = "green","2"="red")))
+
+plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = c("Pan Cytokeratin + Keratin Epithelial","SMA"),
+            exprs_values = "c_counts_asinh_scaled")
+
+library(cowplot)
+p3 <-plot_grid(ggdraw(p1$plot, clip = "on"), ggdraw(p2$plot))
+file3 <- tempfile("sce87A_tumour-nontumour_panCK_SMA-plots",fileext = ".png")
+save_plot(file3, p3, ncol=2, base_width = 10)
+
+unique(sce_87_A$acID)
+
+all_masks
+names(all_masks)
+ac_info <- str_split(names(all_masks), '_', simplify=TRUE)
+image$Metadata_Description
+head(ac_info)
+cell_meta$BatchID <- ac_info[cell_meta$ImageNumber,1]
+
+ac_sub <- as.data.frame(ac_info) %>%
+            separate( V8,
+              into = c("TMA", "ImageNb"), 
+              sep = "(?<=[A-Za-z])(?=[0-9])",
+              remove=F
+            )
+ac_sub$ImageNb
+as.data.frame(ac_info)
+
+mcols(all_masks)$ImageNb %in% unique(tma87$ImageNb)
+
+
+tma87$Distance <- tma87$Compartment
+tma87$Distance[tma87$Compartment <(0) & tma87$Compartment >(-30)] <- "-10 - 0"
+tma87$Distance[tma87$Compartment <=(-30) & tma87$Compartment >(-60)] <- "-10 - -20"
+tma87$Distance[tma87$Compartment <=(-60) & tma87$Compartment >(-90)] <- "-20 - -30"
+tma87$Distance[tma87$Compartment <=(-90) & tma87$Compartment >(-120)] <- "-30 - -40"
+tma87$Distance[tma87$Compartment <=(-120) & tma87$Compartment >(-150)] <- "-40 - -50"
+tma87$Distance[tma87$Compartment <=(-150) ] <- "< -50"
+tma87$Distance[tma87$Compartment >=0 ] <- ">0"
+tma87$Distance %>% unique
+tma87$Distance <- as.factor(tma87$Distance)
+
+plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "Distance",
+            colour = list(Distance = c("-10 - 0"="red","-10 - -20"="orange","-20 - -30"="yellow","-30 - -40"="green", "-40 - -50"="blue", "< -50"="white",">0"="grey")), return_plot = TRUE)#, "Other"="white"
+```
+
+```{r,fig.width=50, fig.height=50}
+pdf(file=file.path("/mnt/lena_processed2/NSCLC_NEW/plots_cytomapper","FINAL_tumour_vsNONtumour_87A.pdf"), width=20, height=20)
+p2 <-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "cat",
+            colour = list(cat = c("non_tumour" = "green","tumour"="red")), return_plot = TRUE)
+dev.off()
+
+pdf(file=file.path("/mnt/lena_processed2/NSCLC_NEW/plots_cytomapper","FINAL_tumour_vsNONtumour_87A_cell-category.pdf"), width=20, height=20)
+
+p3<-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "cell_category",
+            colour = list(cell_category = c("stroma" = "green","tumour"="red", "immune"="blue","undefined"="yellow")),return_plot = TRUE)
+dev.off()
+
+pdf(file=file.path("/mnt/lena_processed2/NSCLC_NEW/plots_cytomapper","Distance_to_tumour_87A.pdf"), width=20, height=20)
+
+tma87$Distance <- tma87$Compartment
+tma87$Distance[tma87$Compartment <(0) & tma87$Compartment >(-30)] <- "-10 - 0"
+tma87$Distance[tma87$Compartment <=(-30) & tma87$Compartment >(-60)] <- "-10 - -20"
+tma87$Distance[tma87$Compartment <=(-60) & tma87$Compartment >(-90)] <- "-20 - -30"
+tma87$Distance[tma87$Compartment <=(-90) & tma87$Compartment >(-120)] <- "-30 - -40"
+tma87$Distance[tma87$Compartment <=(-120) & tma87$Compartment >(-150)] <- "-40 - -50"
+tma87$Distance[tma87$Compartment <=(-150) ] <- "< -50"
+tma87$Distance[tma87$Compartment >=0 ] <- ">0"
+tma87$Distance %>% unique
+tma87$Distance <- as.factor(tma87$Distance)
+
+p <-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "Distance",
+            colour = list(Distance = c("-10 - 0"="red","-10 - -20"="orange","-20 - -30"="yellow","-30 - -40"="green", "-40 - -50"="blue", "< -50"="purple",">0"="grey")), return_plot = TRUE)#, "Other"="white"
+dev.off()
+```
+```{r, fig.width=50, fig.height=50}
+path.to.images <-file.path(wd,"mask")
+all_masks <- loadImages(path.to.images, pattern = "2020121_LC_NSCLC_TMA_87_A") 
+mcols(all_masks)$ImageNb <- c("1" ,"10","100","102", "104","105","106","107","108","109", "11","110","111","112","114","115","116","117","118","119","12","121","122" ,"123", "124" ,"125", "126", "127", "128" ,"129" ,"13" , "130" ,"131" ,"132" ,"133" ,"134" ,"135" ,"137", "138", "14" , "15" , "16" , "17" , "18" , "19"  ,"2"   ,"20"  ,"21"  ,"22"  ,"23" , "24" , "25" , "26" , "27" , "28"  ,"29" , "3"  , "30"  ,"31"  ,"32"  ,"33"  ,"34"  ,"36",  "37" , "38" , "39" , "4" ,  "40"  ,"41" , "42" , "43"  ,"44"  ,"45"  ,"46"  ,"47"  ,"48" , "5"  , "50" , "51" , "52" , "53",  "54"  ,"55"  ,"56" , "57"  ,"58" , "59" , "6"   ,"60" , "61" , "63" , "64"  ,"65" , "66" , "67"  ,"68" , "69" , "7" ,  "70" , "71",  "72" , "73" ,"74"  ,"75" , "76" , "77",  "78" , "79" , "8"  , "80"  ,"81"  ,"82"  ,"83" , "85",  "86" , "87"  ,"88" , "89" , "9"   ,"90"  ,"91" , "92" , "93" ,"94"  ,"95"  ,"96" , "97"  ,"98"  ,"99" )
+#mcols(all_masks)$ImageNb <- c(ac_sub$ImageNb)
+head(unique(as.numeric(all_masks[[1]])))
+all_masks <- scaleImages(all_masks, 2^16-1)
+
+tma87 <- all.filtered[, all.filtered$TMA=="87A"]
+tma87 <- all.pat.roi[, all.pat.roi$TMA=="87A"]
+tma87 <- all.sce[, all.sce$TMA=="87A"]
+
+tma87$ImageNb <- tma87$acID
+
+
+#pdf(file=file.path("/mnt/lena_processed2/NSCLC_NEW/plots_cytomapper","panCK_SMA expression_87A_allCells_Categorised.pdf"), width=20, height=20)
+p1<-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = c("Pan Cytokeratin + Keratin Epithelial","SMA"),
+            exprs_values = "c_counts_asinh_scaled", return_plot = TRUE)
+#dev.off()
+
+#pdf(file=file.path("/mnt/lena_processed2/NSCLC_NEW/plots_cytomapper","87A_allCells_Categorised.pdf"), width=20, height=20)
+p2 <-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "cell_category",
+            colour = list(cell_category = c("Tumour"="red","Immune"="blue","T cell"="blue","vessel"="yellow", "Fibroblast"="green")), return_plot = TRUE)
+#dev.off()
+
+pdf(file=file.path("/mnt/lena_processed2/NSCLC_NEW/plots_cytomapper","87A_tumour_stroma_Masks.pdf"), width=20, height=20)
+
+p3 <-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "Mask",
+            colour = list(Mask = c("tumour"="red","stroma"="green")), return_plot = TRUE)
+dev.off()
+
+```
+
+```{r, fig.width=50, fig.height=50}
+tma87$Mask <- ifelse(tma87$Compartment > 0, "tumour","stroma")
+p3 <-plotCells(all_masks, object = tma87,
+            img_id = "ImageNb", cell_id = "CellNumber",
+            colour_by = "Mask",
+            colour = list(Mask = c("tumour"="red","stroma"="green")), return_plot = TRUE)
+```
+

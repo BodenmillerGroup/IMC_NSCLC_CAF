@@ -1,0 +1,259 @@
+---
+title: "R Notebook - Cluster Tumour cells hypoxic non hypoxic"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r, import libraries, echo=F, warnings=F, message=F}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(stringr)
+library(DT)
+library(dplyr)
+library(tidyr)
+library(mclust)
+library(ggplot2)
+library(RColorBrewer)
+library(scater)
+library(Rphenoannoy)
+library(factoextra)
+library(cluster)
+library(dendextend)
+library(ggthemes)
+library(ggpubr)
+library(dplyr)
+#library(tidyverse)
+library(RColorBrewer)
+library(pals)
+library(qwraps2)
+library(table1)
+library(SingleCellExperiment)
+library(tidyr)
+library(scater)
+library(ggridges)
+library(viridis)
+library(viridisLite)
+library(ggplot2)
+library(data.table)
+library(CATALYST)
+library(gridExtra)
+library(Rphenograph)
+library(ComplexHeatmap)
+library(CATALYST)
+library(scales)
+library(survival)
+library(broom)
+library(pheatmap)
+library(FlowSOM)
+library(Seurat)
+library(Rphenoannoy)
+library(dplyr)
+library(data.table)
+library(ggthemes)
+library(diffcyt)
+library(edgeR)
+library(rstatix)
+library(dendextend)
+library(ggdendro)
+library(dendextend)
+library(FactoMineR)
+library(factoextra)
+library(survminer)
+library(corrplot)
+library(rstatix)
+library(graphics)
+library(cowplot)
+library(cluster)
+library(glmnet)
+library(fastDummies)
+library(ggsci)
+library(FactoMineR)
+library(factoextra)
+set.seed(101100)
+```
+
+```{r, Set wd and load data final vessel, message=F, warning=F, echo=F}
+#set working directory 
+wd <-dirname(getwd())
+
+data_folder <-(file.path(wd,"sce_objects","final objects with categories","FINAL"))
+
+#RAW
+#all.tumour <-readRDS(file=file.path(data_folder, "TUMOUR_CLINICAL-DATA_FILTERED.rds"))
+
+data_folder <-(file.path(wd,"sce_objects","Tumour"))
+
+#saveRDS(all.tumour, file=file.path(data_folder, "FINAL_All_Tumour_clustered.rds"))
+
+#workingfile
+all.tumour <- readRDS(file=file.path(data_folder, "FINAL_All_Tumour_clustered.rds"))
+
+```
+
+Tumour marker
+```{r, Define final vessel markers, echo=F, warning=F, message=FALSE}
+all.marker <-rownames(all.tumour)
+
+bad.marker <- c("Iridium_191","Iridium_193","Cadherin-6","Histone H3") 
+good.marker <- all.marker[!all.marker %in% bad.marker]
+
+tumour.marker <-c("Carbonic Anhydrase IX","Pan Cytokeratin + Keratin Epithelial")
+print(tumour.marker)
+```
+
+#GLM per TmaBlock separating cells into tumour/non-tumour
+
+```{r, glm tumour non tumour 86A}
+dat.counts <-as.data.frame(t((assay(all.tumour,"c_counts_asinh"))))
+dat.counts$CellID <- rownames(dat.counts)
+dat.counts.panCK <- dat.counts %>% select(CellID, `Carbonic Anhydrase IX`)
+
+ggplot(dat.counts.panCK, aes(x=`Carbonic Anhydrase IX`)) + 
+  geom_density()
+
+glm.tumour <-Mclust(dat.counts.panCK$`Carbonic Anhydrase IX`,G=2)
+#plot(glm.tumour)
+table(glm.tumour$classification)
+
+all.tumour$mclust <- glm.tumour$classification
+```
+
+```{r, subset tumour all, echo=F, message=F, warning=F, eval=F}
+#split cells by ImageNumber
+n_cells_dr <- 100
+cs <- split(seq_len(ncol(all.tumour)), all.tumour$Tma_ac)
+length(unique(all.tumour$Tma_ac))
+#sample 'n_cells_dr' per ImageNumber
+cs <- unlist(lapply(cs, function(u) 
+  sample(u, min(n_cells_dr, length(u)))))
+#sub.test <- sce[,cs]
+all.tumour.sub <- all.tumour[,cs]
+
+#calculate percentage of cells subsetting results in
+p<-dim(assay(all.tumour.sub))[2]/dim(assay(all.tumour))[2]*100
+
+#results in % of all cells
+print(paste("Subsetting results in a total number of",dim(assay(
+  all.tumour.sub))[2],"cells, which corresponds to",round(p,digits=2), "% of all cells of the original sce." ))
+
+saveRDS(all.tumour.sub, file=file.path(data_folder, paste("all_tumour_sub.rds")))
+```
+
+```{r, load subset tumour all, message=FALSE, warning=FALSE, echo=FALSE}
+all.tumour.sub <- readRDS(file=file.path(data_folder, paste("all_tumour_sub.rds")))
+```
+
+```{r, calculate umap tumour final, warning=F, message=F, echo=F, eval=FALSE}
+p <-c(10,50,100)
+p=50
+for(i in p){
+all.tumour.sub <- runUMAP(all.tumour.sub,
+                 exprs_values = "c_counts_asinh",
+                 name = paste0("UMAP_p", i),
+                 #use_dimred="PCA_20",
+                 n_neighbors = i)
+saveRDS(all.tumour.sub, file=file.path(data_folder, paste("all_tumour_sub.rds")))
+
+}
+
+
+#for(i in p){
+#all.tumour.sub <- runTSNE(all.tumour.sub,
+ #                exprs_values = "c_counts_asinh",
+ #                name = paste0("tSNE_p", i),
+ #                #use_dimred="PCA_20",
+ #               perplexity = i)
+#saveRDS(all.tumour.sub, file=file.path(data_folder, paste("all_tumour_sub.rds")))
+#}
+```
+
+
+**UMAP with good markers**
+```{r,plot umap tumour.final tumour marker, fig.width=12, fig.height=8, echo=F, message=FALSE,warning=FALSE}
+dat <-as.data.frame(reducedDims(all.tumour.sub)$`UMAP_p50`)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.tumour.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% tumour.marker], names_to = "target", values_to = "counts")
+
+
+p <-dat.all.long %>%
+  ggplot(aes(x=V1, y=V2, color=counts))+
+  facet_wrap(~target, scales = "free", ncol = 6)+
+  geom_point(alpha=0.5, size=0.2)+
+  scale_color_gradientn(colours=rev(brewer.pal(11, 'Spectral')), name='Counts')+
+  ggtitle('')+
+  theme(strip.background = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+         strip.text = element_text(size=8)) 
+
+##ggsave(filename=file.path(plot_folder, paste("sub_fibro_fibro-Marker_UMAP_p50_NEW.png",sep="")), plot=p, width=16, height=10)
+plot(p)
+```
+Expression of CA9 and panCK by tumour type
+```{r, Vln plot CA9 and PanCK, echo=F, warnings=F, message=F}
+p <- ggplot(dat.all.long, aes(x=target, y=counts)) + 
+  geom_violin()+
+p
+
+
+dat <-as.data.frame(reducedDims(all.tumour.sub)$`UMAP_p50`, all.tumour.sub$CellID)
+dat$cell <- rownames(dat)
+dat.counts <-as.data.frame(t((assay(all.tumour.sub,"c_counts_asinh_scaled"))))
+dat.counts$cell <- rownames(dat.counts)
+dat.all <-merge(dat, dat.counts, by.x="cell", by.y="cell")
+
+cell_df <- data.frame("CellID"=all.tumour.sub$CellID,"mclust"= all.tumour.sub$mclust)
+cell_df$cell <-paste("X",cell_df$CellID, sep="")
+
+dat.all <- left_join(dat.all, cell_df, by="cell")
+
+dat.all.long <-pivot_longer(dat.all, cols = colnames(dat.all)[colnames(dat.all) %in% tumour.marker], names_to = "target", values_to = "counts")
+
+p <- ggplot(dat.all.long, aes(x=target, y=counts, fill=mclust)) + 
+  geom_violin()
+p
+```
+
+```{r, umap tumour final hypoxic vs normal mclust, echo=F, warnings=F, message=F}
+all.tumour$mclust <- as.factor(all.tumour$mclust)
+all.tumour.sub$mclust <- as.factor(all.tumour.sub$mclust)
+
+cluster <- "mclust"
+plotReducedDim(all.tumour.sub, "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+```
+
+```{r, umap tumour final hypoxic vs normal, echo=F, warnings=F, message=F}
+all.tumour$tumour_type <- ifelse(all.tumour$mclust=="1", "normal", "hypoxic")
+all.tumour.sub$tumour_type <- ifelse(all.tumour.sub$mclust=="1", "normal", "hypoxic")
+
+
+cluster <- "tumour_type"
+plotReducedDim(all.tumour.sub, "UMAP_p50", colour_by=paste(cluster), text_by = paste(cluster),text_colour ="red", point_size=0.5,)+labs(x="UMAP-1", y="UMAP-2", title="UMAP") 
+```
+
+```{r, save RDS and csv, echo=F, warnings=F, message=F, eval=F}
+saveRDS(all.tumour, file=file.path(data_folder, "FINAL_All_Tumour_clustered.rds"))
+saveRDS(all.tumour.sub, file=file.path(data_folder, paste("all_tumour_sub.rds")))
+
+data_folder <-(file.path(wd,"sce_objects","final objects with categories","FINAL"))
+
+cell_df <- data.frame("CellID"=all.tumour$CellID, "Tumour_Type"=all.tumour$tumour_type)
+write.csv(cell_df, file=file.path(data_folder, "tumour_celltype.csv"))
+```
+

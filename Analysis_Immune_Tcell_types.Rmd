@@ -1,0 +1,2347 @@
+---
+title: "R Notebook - Analysis Immune + T cell Types"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r, import libraries, echo=F, warnings=F, message=F}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(stringr)
+library(DT)
+library(dplyr)
+library(tidyr)
+library(mclust)
+library(ggplot2)
+library(RColorBrewer)
+library(scater)
+library(Rphenoannoy)
+library(factoextra)
+library(cluster)
+library(dendextend)
+library(ggthemes)
+library(ggpubr)
+library(dplyr)
+#library(tidyverse)
+library(RColorBrewer)
+library(pals)
+library(qwraps2)
+library(table1)
+library(SingleCellExperiment)
+library(tidyr)
+library(scater)
+library(ggridges)
+library(viridis)
+library(viridisLite)
+library(ggplot2)
+library(data.table)
+library(CATALYST)
+library(gridExtra)
+library(Rphenograph)
+library(ComplexHeatmap)
+library(CATALYST)
+library(scales)
+library(survival)
+library(broom)
+library(pheatmap)
+library(FlowSOM)
+library(Seurat)
+library(Rphenoannoy)
+library(dplyr)
+library(data.table)
+library(ggthemes)
+library(diffcyt)
+library(edgeR)
+library(rstatix)
+library(dendextend)
+library(ggdendro)
+library(dendextend)
+library(FactoMineR)
+library(factoextra)
+library(survminer)
+library(corrplot)
+library(rstatix)
+library(graphics)
+library(cowplot)
+library(cluster)
+library(glmnet)
+library(fastDummies)
+library(ggsci)
+library(FactoMineR)
+library(factoextra)
+set.seed(101100)
+```
+
+
+```{r}
+wd <-dirname(getwd())
+
+data_folder <-(file.path(wd,"sce_objects","immune"))
+
+
+immune.sce_pat.roi <-readRDS(file=file.path(data_folder, paste("Immune_all_sce_pat_roi_rem.rds",sep="")))
+immune.sce_roi <-readRDS(file=file.path(data_folder, paste("Immune_all_sce_roi_rem.rds",sep="")))
+immune.sce_pat <-readRDS(file=file.path(data_folder, paste("Immune_all_sce_pat_rem.rds",sep="")))
+```
+
+
+Define clinical data
+```{r, clinical data, message=FALSE, warning=FALSE, echo=FALSE}
+#clinical.data <-as.data.frame(colData(immune.sce))
+
+clinical.data <- read.csv(file=file.path(wd,"sce_objects","clinical_data", "clinical_data_ROI_ac_combined_CORRECT.csv"))
+
+clinical.data = clinical.data[!duplicated(clinical.data$Patient_ID),]
+clinical.data$X <-NULL
+clinical.data$X.1 <-NULL
+head(clinical.data)
+```
+#Immune T cell type
+
+
+##Analysis
+#Proportions Immune cell CATEGORY
+
+## **Analysis**
+In the following, only tumours that were identified as adenocarcinomas or squamous cell carcinomas by pathologists will be used.
+
+## **Immune cell Category**
+
+## **Proportions**
+Optimal number of patient metaclusters Immune cell category proportions
+```{r, optimal number of clusters for non Immune cell category type proportion clusters, message=FALSE, warning=FALSE, echo=FALSE, out.width="50%", fig.width=6, fig.height=4}
+#Calculate Proportions
+neoadj_pat <- clinical.data %>% filter(NeoAdj == "NeoAdjuvantTherapy") %>% select(Patient_ID) 
+tdat <-as.data.frame(table( immune.sce_pat[, immune.sce_pat$Patient_ID!="Control"&
+                                           immune.sce_pat$DX.name=="Adenocarcinoma"|
+                                           immune.sce_pat$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                            immune.sce_pat[, immune.sce_pat$Patient_ID!="Control"&
+                                           immune.sce_pat$DX.name=="Adenocarcinoma"|
+                                           immune.sce_pat$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+
+
+colnames(tdat)<-c("Patient_ID","Phenotype","n")
+
+tdat <-tdat %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+tdat[is.na(tdat)] <- 0
+tdat$Phenotype <-droplevels(tdat$Phenotype)
+tdat$Patient_ID <-droplevels(tdat$Patient_ID)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+tdat_wide <-tdat_wide[!tdat_wide$Patient_ID%in% neoadj_pat$Patient_ID,]
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+#tdat_m <-tdat_m[,1:2]
+hc <- hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2")
+
+#devtools::install_github("kassambara/factoextra")
+sbg <-cutree(hc, k=2)
+fviz_cluster(list(data = tdat_wide[,-1], cluster = sbg))
+
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "wss", k.max=15)
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "gap_stat", k.max=15)
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "silhouette", k.max=15)
+
+#install.packages("cluster")
+gap_stat <- clusGap(tdat_wide[,-1], FUN = hcut, nstart = 25, K.max = 10, B = 100)
+fviz_gap_stat(gap_stat)
+
+# Compute distance matrix
+#res.dist <- dist(tdat_wide[,-1], method = "euclidean")
+```
+
+## Patients are ordered by hierarchical clustering (euclidian, wards.D2)
+```{r, Immune cell category proportions ordered by hierarchical clustering, message=FALSE, warning=FALSE, echo=FALSE}
+tdat <-as.data.frame(table( immune.sce_pat[, immune.sce_pat$Patient_ID!="Control"&
+                                           immune.sce_pat$DX.name=="Adenocarcinoma"|
+                                           immune.sce_pat$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                            immune.sce_pat[, immune.sce_pat$Patient_ID!="Control"&
+                                           immune.sce_pat$DX.name=="Adenocarcinoma"|
+                                           immune.sce_pat$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("Patient_ID","Phenotype","n")
+
+tdat <-tdat %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+tdat[is.na(tdat)] <- 0
+tdat$Phenotype <-droplevels(tdat$Phenotype)
+tdat$Patient_ID <-droplevels(tdat$Patient_ID)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+hc <- hclust(dist(tdat_m[,-1], method="euclidian"),"ward.D2")
+tdat_wide$Patient_ID <- factor(tdat_wide$Patient_ID, levels = hc$labels[hc$order])
+tdat$Patient_ID <- factor(tdat$Patient_ID, levels = hc$labels[hc$order])
+
+tdat_wide
+```
+
+Patient based metaclusters split by metacluster
+```{r, Barplot Immune cell category proportions, message=FALSE, warning=FALSE, echo=FALSE, fig.width=12, fig.height=6}
+#Barplot proportions ordered by
+p <-ggplot(tdat,aes(x=freq, y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau()
+#plot(p)
+#ggsave(plot=p, file=file.path(plot_folder, paste("Barplot_Tcell-Category_over_FILTEREDpatients_ordered-hc.pdf")), width=6, height=6)
+
+#dendrogram coloured by metacluster
+ggdend <-hc%>% as.dendrogram() %>% dendextend::set("branches_k_color", k = 9) %>%  as.ggdend()
+p1 <-ggplot(ggdend, labels = F)+scale_x_continuous(expand = c(0, 0))+
+  theme_void()+
+  coord_flip()+
+  scale_y_reverse()
+
+#n
+p2<-ggplot(tdat,aes(x=n, y=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+theme(
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.y=element_blank())
+plt <-p1+
+  p+theme(legend.position = "none", axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.y=element_blank())+
+  p2
+
+plot(plt)
+#ggsave(plot=plt, file=file.path(plot_folder, paste("Barplot_n_hc_cell_subtype_proportions.pdf")), width=6, height=6)
+```
+
+```{r, merge hc metacluster into t_dat Immune cell category proportions, message=FALSE, warning=FALSE, echo=FALSE, fig.width=12, fig.height=6}
+clinical.data = clinical.data[!duplicated(clinical.data$Patient_ID),]
+
+#cut dendrogram, add metacluster info to tdat
+ct <-as.data.frame(cutree(hc, k= 9))
+
+colnames(ct)<-"metacluster"
+ct$metacluster <-as.factor(ct$metacluster)
+ct$Patient_ID <- rownames(ct)
+
+tdat_wide_ct <-left_join(tdat_wide, ct, by="Patient_ID")
+tdat_wide_ct <- left_join(tdat_wide_ct, clinical.data, by="Patient_ID")
+table(tdat_wide_ct$metacluster)
+
+#split barlot by metacluster
+tdat_ct <-merge(tdat, ct, by="Patient_ID")
+
+p <-ggplot(tdat_ct,aes(y=freq,x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+
+    theme(legend.position="bottom")+
+  facet_grid(~ metacluster, scales = "free", space = "free")
+#ggsave(plot=p, file=file.path(plot_folder, paste("Barplot_split_metacluster_tcell-category_proportions.pdf")))
+plot(p)
+```
+
+
+## **Survival analysis** - Immune cell category
+Immune cell categories (CD4 and CD8) are grouped into "high" and "low" using the proportion's median as a cut-off.    
+- high > median  
+- low < median  
+Patients who received neoadjuvant treatment are excluded from survival analysis.  
+```{r, survival data Immune cell category proportions high-low, message=FALSE, warning=FALSE, echo=FALSE}
+neoadj_pat <- clinical.data %>% filter(NeoAdj == "NeoAdjuvantTherapy") %>% select(Patient_ID) 
+surv_dat <-as.data.table(tdat_wide_ct)
+surv_dat<- surv_dat[is.na(surv_dat$OS) !=T,]
+
+# Censoring for OS (1 = event (death due to disease), 0 = censored)
+surv_dat[,censoringOS := 0]
+surv_dat[Ev.O == 1,censoringOS := 1]
+
+# Censoring for disease free survival (1 = event (recurrence), 0 = censored)
+surv_dat[ ,censoringDFS := 0]
+surv_dat[ OS > DFS, censoringDFS := 1]
+surv_dat$censoringDFS <-as.numeric(as.character(surv_dat$censoringDFS))
+
+surv_dat <-surv_dat[surv_dat$DX.name=="Adenocarcinoma"|surv_dat$DX.name=="Squamous cell carcinoma",]
+surv_dat <-surv_dat[!surv_dat$Patient_ID%in% neoadj_pat,]
+
+#high low by median
+surv_dat$Neutrophil_G <- ifelse(surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[3],"Neutrophil high","Neutrophil low")
+surv_dat$Bcell_G <- ifelse(surv_dat$Bcell >summary(surv_dat$Bcell)[3],"B cell high","B cell low")
+surv_dat$Myeloid_G <- ifelse(surv_dat$Myeloid >summary(surv_dat$Myeloid)[3],"Myeloid high","Myeloid low")
+surv_dat$CD4_G <- ifelse(surv_dat$CD4 >summary(surv_dat$CD4)[3],"CD4 high","CD4 low")
+surv_dat$CD4_Treg_G <- ifelse(surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[3],"CD4 Treg high","CD4 Treg low")
+surv_dat$CD4_IDO_G <- ifelse(surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[3],"CD4 IDO high","CD4 IDO low")
+surv_dat$CD4_PD1_G <- ifelse(surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[3],"CD4 PD1 high","CD4 PD1 low")
+surv_dat$CD4_TCF_G <- ifelse(surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[3],"CD4 TCF1/7 high","CD4 TCF1/7 low")
+surv_dat$CD4_ki67_G <- ifelse(surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[3],"dividing CD4 high","dividing CD4 low")
+
+surv_dat$CD8_IDO_G <- ifelse(surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[3],"CD8 IDO high","CD8 IDO low")
+surv_dat$CD8_TCF_G <- ifelse(surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[3],"CD8 TCF1/7 high","CD8 TCF1/7 low")
+surv_dat$CD8_G <- ifelse(surv_dat$CD8 >summary(surv_dat$CD8)[3],"CD8 high","CD8 low")
+surv_dat$CD8_ki67_G <- ifelse(surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[3],"dividing CD8 high","dividing CD8 low")
+
+surv <-c("Bcell_G","Neutrophil_G","Myeloid_G", "metacluster","CD8_G","CD4_G","CD4_Treg_G","CD4_IDO_G","CD4_PD1_G","CD4_TCF_G","CD4_ki67_G", "CD8_IDO_G","CD8_TCF_G","CD8_ki67_G")
+```
+
+
+#CoxPH for Immune cell category proportions corrected for Stage, Grade and M
+```{r, Coxph Immune cell category proportions, echo=F, message=FALSE, warning=FALSE}
+surv_dat
+surv_dat<-surv_dat[!surv_dat$OS == 0, ]
+time <- surv_dat$OS
+status <- surv_dat$censoringOS
+surv_dat$metacluster <-as.factor(surv_dat$metacluster)
+surv_dat$Grade <-as.numeric(surv_dat$Grade)
+rownames(surv_dat) <- surv_dat$Patient_ID
+res.cox <- coxph(Surv(time, status) ~ metacluster, data = surv_dat)
+res.cox
+
+
+res.cox <- coxph(Surv(time, status) ~   Neutrophil+Bcell+ CD4 + CD8+`TCF1/7_CD4`+ki67_CD8+`TCF1/7_CD8`+PD1_CD4+IDO_CD8 +ki67_CD4+IDO_CD4+CD4_Treg + Myeloid + Stage+Grade+M.new, data =  surv_dat)
+
+#res.cox <- coxph(Surv(time, status) ~ `CD4+`+tpCAF+iCAF+mCAF+dCAF+vCAF+`SMA+ CAF`+`IDO+ CAF`+`dividing tpCAF`+`hypoxic CAF`+Grade, data =  surv_dat)
+summary(res.cox)
+
+
+td_res = tidy(res.cox, exponentiate = TRUE)
+td_res = td_res %>% arrange(estimate) %>% mutate(term = factor(term,levels = term))
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.high = estimate + std.error)
+
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.low = estimate - std.error)
+td_res<-td_res[!td_res$std.error == 0, ]
+td_res <-td_res[td_res$term !="Grade"&
+                  td_res$term !="Stage"&
+                  td_res$term !="M.new",]
+
+p <-ggplot(td_res, aes(x = term, y = estimate,color =p.value < 0.05)) +
+geom_point(size = 4) +
+geom_errorbar(aes(ymax = conf.high, ymin = conf.low))+
+scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+#xlim(0,2)+
+geom_hline(yintercept = 1,color = 'black')+
+theme_bw()+
+scale_colour_tableau()
+#
+plot(p)
+```
+
+## Not split by tumour type (AC and SQC together)
+```{r, survival Immune cell category proportions not split high low, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=4, fig.width=6}
+
+
+#not split by Tumour Type (AC/SQC)
+for (i in surv){
+  #for (k in unique(surv_dat$DX.name)){
+    #dat <-surv_dat[surv_dat$DX.name==k,]
+  dat <-surv_dat
+  k="AC & SCC together"
+  
+#OS
+pw<-pairwise_survdiff(Surv(OS, censoringOS) ~ metacluster,data = surv_dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+ #  symbols = c("****", "***", "**", "*", "+", "."),
+  # abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(OS, censoringOS) ~ dat[[i]], data=dat)      
+km_trt_fit
+      
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = F,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("OS over",i,"per",k))
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+#print(p)
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  facet_wrap(~strata)+theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#km_trt_fit
+#print(p)
+
+#disease free survival
+pw<-pairwise_survdiff(Surv(DFS, censoringDFS) ~ metacluster,data = surv_dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+ #  abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(DFS, censoringDFS) ~ dat[[i]], data=dat)   
+km_trt_fit
+
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = T,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("DFS over",i,"per",k))#+
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#print(p)
+#km_trt_fit
+  }
+```
+
+## Split by tumour type (AC and SQC individually)
+```{r, survival Immune cell category proportions split high low, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=4, fig.width=6}
+#OS survival
+#split by Tumour Type (AC/SQC)
+for (i in surv){
+  for (k in unique(surv_dat$DX.name)){
+    dat <-surv_dat[surv_dat$DX.name==k,]
+surv_dat$Neutrophil_G <- ifelse(surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[3],"Neutrophil high","Neutrophil low")
+surv_dat$Bcell_G <- ifelse(surv_dat$Bcell >summary(surv_dat$Bcell)[3],"B cell high","B cell low")
+surv_dat$Myeloid_G <- ifelse(surv_dat$Myeloid >summary(surv_dat$Myeloid)[3],"Myeloid high","Myeloid low")
+
+surv_dat$CD4_G <- ifelse(surv_dat$CD4 >summary(surv_dat$CD4)[3],"CD4 high","CD4 low")
+surv_dat$CD4_Treg_G <- ifelse(surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[3],"CD4 Treg high","CD4 Treg low")
+surv_dat$CD4_IDO_G <- ifelse(surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[3],"CD4 IDO high","CD4 IDO low")
+surv_dat$CD4_PD1_G <- ifelse(surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[3],"CD4 PD1 high","CD4 PD1 low")
+surv_dat$CD4_TCF_G <- ifelse(surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[3],"CD4 TCF1/7 high","CD4 TCF1/7 low")
+surv_dat$CD4_ki67_G <- ifelse(surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[3],"dividing CD4 high","dividing CD4 low")
+
+surv_dat$CD8_IDO_G <- ifelse(surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[3],"CD8 IDO high","CD8 IDO low")
+surv_dat$CD8_TCF_G <- ifelse(surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[3],"CD8 TCF1/7 high","CD8 TCF1/7 low")
+surv_dat$CD8_G <- ifelse(surv_dat$CD8 >summary(surv_dat$CD8)[3],"CD8 high","CD8 low")
+surv_dat$CD8_ki67_G <- ifelse(surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[3],"dividing CD8 high","dividing CD8 low")
+
+#OS
+pw<-pairwise_survdiff(Surv(OS, censoringOS) ~ metacluster,data = surv_dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+ #  symbols = c("****", "***", "**", "*", "+", "."),
+   #abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(OS, censoringOS) ~ dat[[i]], data=dat)      
+km_trt_fit
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = F,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,2000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("OS over",i,"per",k))
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+#print(p)
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#km_trt_fit
+#print(p)
+
+#disease free survival
+pw<-pairwise_survdiff(Surv(DFS, censoringDFS) ~ metacluster,data = surv_dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+ #  symbols = c("****", "***", "**", "*", "+", "."),
+ #  abbr.colnames = FALSE, na = " "))
+km_trt_fit <- survfit(Surv(DFS, censoringDFS) ~ dat[[i]], data=dat)   
+km_trt_fit
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = T,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,2000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("DFS over",i,"per",k))#+
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#print(p)
+#km_trt_fit
+  }
+}
+```
+
+## Lasso-regressed cox-ph model  
+Including clinical parameters, patient metacluster and Immune cell categories (CD4 vs CD8) classified as high / low as well as the proportion (continuous).   
+```{r, coxph Immune cell category proportions, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.width=6, fig.height=6}
+surv_dat$metacluster <-as.numeric(surv_dat$metacluster)
+fd_test <- fastDummies::dummy_cols(surv_dat, select_columns = c(paste(surv),"Typ","Grade","T.new","N","M.new","Stage","Smok","Gender", "metacluster")) #
+
+fd_test<-fd_test[!fd_test$OS == 0, ]
+time <- fd_test$OS
+status <- fd_test$censoringOS
+
+rownames(fd_test) <- fd_test$Patient_ID
+
+fd_test <-fd_test %>%select(-c(paste(surv),"metacluster",colnames(clinical.data),contains("censor"))) #))
+
+fd_test[is.na(fd_test)] <- 0
+fd_test_matrix <-data.matrix(fd_test)
+
+#determine lambda
+cv.fit <- cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+fit <- glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+#plot(cv.fit)
+#cv.fit$lambda.min
+
+#loop to determine optimal lambda for lasso regression
+MSEs <- NULL
+for (i in 1:100){
+                 cv <-  cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+                 MSEs <- cbind(MSEs, cv$cvm)
+             }
+  rownames(MSEs) <- cv$lambda
+  lambda.min <- as.numeric(names(which.min(rowMeans(MSEs))))
+
+#coef(fit, s = lambda.min)
+Coefficients <- coef(fit, s = lambda.min)
+Active.Index <- which(Coefficients != 0)
+Active.Coefficients <- Coefficients[Active.Index]
+#Coefficients
+
+
+active_coefficients <- Coefficients[,1] != 0
+x <- fd_test_matrix[,active_coefficients]
+x <- data.frame(x)
+
+vct <-colnames(x)
+coxdf<-coxph(Surv(time,status)~.,data=x)
+
+td_res = tidy(coxdf, exponentiate = TRUE)
+td_res = td_res %>% arrange(estimate) %>% mutate(term = factor(term,levels = term))
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.high = estimate + std.error)
+
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.low = estimate - std.error)
+td_res<-td_res[!td_res$std.error == 0, ]
+na_td_res <- td_res[-grep("NA",td_res$term),]
+
+
+p <-ggplot(na_td_res, aes(x = term, y = estimate,color =p.value < 0.05)) +
+geom_point(size = 4) +
+geom_errorbar(aes(ymax = conf.high, ymin = conf.low))+
+scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+geom_hline(yintercept = 1,color = 'black')+
+theme_bw()+
+scale_colour_tableau()
+p
+#ggsave(file=file.path(plot_folder, paste("CoxPH_Tcell-Category_Proportions_high-low_Lasso.pdf")), width=10, height=10, plot=p)
+
+ggforest(coxdf, data =  (fd_test %>% select(-contains("NA"))))
+
+
+#pdf(file=file.path(plot_folder,paste("COX_selectedFactors_glmnet.pdf")))
+#ggforest(coxdf, data = fd_test)
+#dev.off()
+```
+
+## Cell groups categorised into "high", "mid", "low".  
+- high > 3rd quantile  
+- mid >1st quantile and < 3rd quantile  
+- low < 1st quantile  
+```{r, survival Immune cell category proportions classified as high mid low, message=FALSE, warning=FALSE, echo=FALSE}
+surv_dat$Bcell_G[surv_dat$Bcell >summary(surv_dat$Bcell)[5]] <-"Bcell high"
+surv_dat$Bcell_G[surv_dat$Bcell <=summary(surv_dat$Bcell)[2]] <-"Bcell low"
+surv_dat$Bcell_G[surv_dat$Bcell >summary(surv_dat$Bcell)[2]& surv_dat$Bcell<=summary(surv_dat$Bcell)[5]] <-"Bcell medium"
+
+surv_dat$Myeloid_G[surv_dat$Myeloid >summary(surv_dat$Myeloid)[5]] <-"Myeloid high"
+surv_dat$Myeloid_G[surv_dat$Myeloid <=summary(surv_dat$Myeloid)[2]] <-"Myeloid low"
+surv_dat$Myeloid_G[surv_dat$Myeloid >summary(surv_dat$Myeloid)[2]& surv_dat$Myeloid<=summary(surv_dat$Myeloid)[5]] <-"Myeloid medium"
+
+surv_dat$Neutrophil_G[surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[5]] <-"Neutrophil high"
+surv_dat$Neutrophil_G[surv_dat$Neutrophil <=summary(surv_dat$Neutrophil)[2]] <-"Neutrophil low"
+surv_dat$Neutrophil_G[surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[2]& surv_dat$Neutrophil<=summary(surv_dat$Neutrophil)[5]] <-"Neutrophil medium"
+
+surv_dat$CD4_G[surv_dat$CD4 >summary(surv_dat$CD4)[5]] <-"CD4 high"
+surv_dat$CD4_G[surv_dat$CD4 <=summary(surv_dat$CD4)[2]] <-"CD4 low"
+surv_dat$CD4_G[surv_dat$CD4 >summary(surv_dat$CD4)[2]& surv_dat$CD4<summary(surv_dat$CD4)[5]] <-"CD4 medium"
+
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[5]] <-"CD4 Treg high"
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg <=summary(surv_dat$CD4_Treg)[2]] <-"CD4 Treg low"
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[2]& surv_dat$CD4_Treg<summary(surv_dat$CD4_Treg)[5]] <-"CD4 T reg medium"
+
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[5]] <-"IDO_CD4 high"
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 <=summary(surv_dat$IDO_CD4)[2]] <-"IDO_CD4 low"
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[2]& surv_dat$IDO_CD4<summary(surv_dat$IDO_CD4)[5]] <-"IDO_CD4 medium"
+
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[5]] <-"PD1_CD4 high"
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 <=summary(surv_dat$PD1_CD4)[2]] <-"PD1_CD4 low"
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[2]& surv_dat$PD1_CD4<summary(surv_dat$PD1_CD4)[5]] <-"PD1_CD4 medium"
+
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[5]] <-"CD4 TCF1/7 high"
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` <=summary(surv_dat$`TCF1/7_CD4`)[2]] <-"CD4 TCF1/7  low"
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[2]& surv_dat$`TCF1/7_CD4`<summary(surv_dat$`TCF1/7_CD4`)[5]] <-"CD4 TCF1/7  medium"
+
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[5]] <-"CD4 dividing high"
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 <=summary(surv_dat$ki67_CD4)[2]] <-"CD4 dividing low"
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[2]& surv_dat$ki67_CD4<summary(surv_dat$ki67_CD4)[5]] <-"CD4 dividing medium"
+
+surv_dat$CD8_G[surv_dat$CD8 >summary(surv_dat$CD8)[5]] <-"CD8 high"
+surv_dat$CD8_G[surv_dat$CD8 <=summary(surv_dat$CD8)[2]] <-"CD8 low"
+surv_dat$CD8_G[surv_dat$CD8 >summary(surv_dat$CD8)[2]& surv_dat$CD8<summary(surv_dat$CD8)[5]] <-"CD8 medium"
+
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[5]] <-"CD8 IDO high"
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 <=summary(surv_dat$IDO_CD8)[2]] <-"CD8 IDO low"
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[2]& surv_dat$IDO_CD8<summary(surv_dat$IDO_CD8)[5]] <-"CD8 IDO medium"
+
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[5]] <-"CD8 TCF1/7 high"
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` <=summary(surv_dat$`TCF1/7_CD8`)[2]] <-"CD8 TCF1/7 low"
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[2]& surv_dat$`TCF1/7_CD8`<summary(surv_dat$`TCF1/7_CD8`)[5]] <-"CD8 TCF1/7 medium"
+
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[5]] <-"CD8 dividing high"
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 <=summary(surv_dat$ki67_CD8)[2]] <-"CD8 dividing low"
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[2]& surv_dat$ki67_CD8<summary(surv_dat$ki67_CD8)[5]] <-"CD8 dividing medium"
+
+surv <-c("Bcell_G","Neutrophil_G","Myeloid_G", "metacluster","CD8_G","CD4_G","CD4_Treg_G","CD4_IDO_G","CD4_PD1_G","CD4_TCF_G","CD4_ki67_G", "CD8_IDO_G","CD8_TCF_G","CD8_ki67_G")
+```
+
+## Survival Immune cell category proportions high mid low not split
+```{r, survival Immune cell category proportions not split high mid low, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=4, fig.width=6}
+#not split by Tumour Type (AC/SQC)
+for (i in surv){
+  #for (k in unique(surv_dat$DX.name)){
+    #dat <-surv_dat[surv_dat$DX.name==k,]
+  dat <-surv_dat
+  k="AC & SCC together"
+  
+#OS
+pw<-pairwise_survdiff(Surv(OS, censoringOS) ~ metacluster,data = surv_dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+  # symbols = c("****", "***", "**", "*", "+", "."),
+  # abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(OS, censoringOS) ~ dat[[i]], data=dat)      
+km_trt_fit
+      
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = F,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("OS over",i,"per",k))
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+#print(p)
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#km_trt_fit
+#print(p)
+
+#disease free survival
+pw<-pairwise_survdiff(Surv(DFS, censoringDFS) ~ metacluster,data = surv_dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+  # symbols = c("****", "***", "**", "*", "+", "."),
+  # abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(DFS, censoringDFS) ~ dat[[i]], data=dat)   
+km_trt_fit
+
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = T,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("DFS over",i,"per",k))#+
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#print(p)
+#km_trt_fit
+  }
+```
+
+## Survival Immune cell category proportions high mid low split by tumour type
+```{r, survival Immune cell category proportions split high mid low, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=4, fig.width=6}
+#split by Tumour Type (AC/SQC)
+for (i in surv){
+  for (k in unique(surv_dat$DX.name)){
+    dat <-surv_dat[surv_dat$DX.name==k,]
+surv_dat$Bcell_G[surv_dat$Bcell >summary(surv_dat$Bcell)[5]] <-"Bcell high"
+surv_dat$Bcell_G[surv_dat$Bcell <=summary(surv_dat$Bcell)[2]] <-"Bcell low"
+surv_dat$Bcell_G[surv_dat$Bcell >summary(surv_dat$Bcell)[2]& surv_dat$Bcell<=summary(surv_dat$Bcell)[5]] <-"Bcell medium"
+
+surv_dat$Myeloid_G[surv_dat$Myeloid >summary(surv_dat$Myeloid)[5]] <-"Myeloid high"
+surv_dat$Myeloid_G[surv_dat$Myeloid <=summary(surv_dat$Myeloid)[2]] <-"Myeloid low"
+surv_dat$Myeloid_G[surv_dat$Myeloid >summary(surv_dat$Myeloid)[2]& surv_dat$Myeloid<=summary(surv_dat$Myeloid)[5]] <-"Myeloid medium"
+
+surv_dat$Neutrophil_G[surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[5]] <-"Neutrophil high"
+surv_dat$Neutrophil_G[surv_dat$Neutrophil <=summary(surv_dat$Neutrophil)[2]] <-"Neutrophil low"
+surv_dat$Neutrophil_G[surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[2]& surv_dat$Neutrophil<=summary(surv_dat$Neutrophil)[5]] <-"Neutrophil medium"
+
+
+surv_dat$CD4_G[surv_dat$CD4 >summary(surv_dat$CD4)[5]] <-"CD4 high"
+surv_dat$CD4_G[surv_dat$CD4 <=summary(surv_dat$CD4)[2]] <-"CD4 low"
+surv_dat$CD4_G[surv_dat$CD4 >summary(surv_dat$CD4)[2]& surv_dat$CD4<summary(surv_dat$CD4)[5]] <-"CD4 medium"
+
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[5]] <-"CD4 Treg high"
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg <=summary(surv_dat$CD4_Treg)[2]] <-"CD4 Treg low"
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[2]& surv_dat$CD4_Treg<summary(surv_dat$CD4_Treg)[5]] <-"CD4 T reg medium"
+
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[5]] <-"IDO_CD4 high"
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 <=summary(surv_dat$IDO_CD4)[2]] <-"IDO_CD4 low"
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[2]& surv_dat$IDO_CD4<summary(surv_dat$IDO_CD4)[5]] <-"IDO_CD4 medium"
+
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[5]] <-"PD1_CD4 high"
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 <=summary(surv_dat$PD1_CD4)[2]] <-"PD1_CD4 low"
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[2]& surv_dat$PD1_CD4<summary(surv_dat$PD1_CD4)[5]] <-"PD1_CD4 medium"
+
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[5]] <-"CD4 TCF1/7 high"
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` <=summary(surv_dat$`TCF1/7_CD4`)[2]] <-"CD4 TCF1/7  low"
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[2]& surv_dat$`TCF1/7_CD4`<summary(surv_dat$`TCF1/7_CD4`)[5]] <-"CD4 TCF1/7  medium"
+
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[5]] <-"CD4 dividing high"
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 <=summary(surv_dat$ki67_CD4)[2]] <-"CD4 dividing low"
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[2]& surv_dat$ki67_CD4<summary(surv_dat$ki67_CD4)[5]] <-"CD4 dividing medium"
+
+surv_dat$CD8_G[surv_dat$CD8 >summary(surv_dat$CD8)[5]] <-"CD8 high"
+surv_dat$CD8_G[surv_dat$CD8 <=summary(surv_dat$CD8)[2]] <-"CD8 low"
+surv_dat$CD8_G[surv_dat$CD8 >summary(surv_dat$CD8)[2]& surv_dat$CD8<summary(surv_dat$CD8)[5]] <-"CD8 medium"
+
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[5]] <-"CD8 IDO high"
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 <=summary(surv_dat$IDO_CD8)[2]] <-"CD8 IDO low"
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[2]& surv_dat$IDO_CD8<summary(surv_dat$IDO_CD8)[5]] <-"CD8 IDO medium"
+
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[5]] <-"CD8 TCF1/7 high"
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` <=summary(surv_dat$`TCF1/7_CD8`)[2]] <-"CD8 TCF1/7 low"
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[2]& surv_dat$`TCF1/7_CD8`<summary(surv_dat$`TCF1/7_CD8`)[5]] <-"CD8 TCF1/7 medium"
+
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[5]] <-"CD8 dividing high"
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 <=summary(surv_dat$ki67_CD8)[2]] <-"CD8 dividing low"
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[2]& surv_dat$ki67_CD8<summary(surv_dat$ki67_CD8)[5]] <-"CD8 dividing medium"
+
+#OS
+pw<-pairwise_survdiff(Surv(OS, censoringOS) ~ metacluster,data = surv_dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+ #  abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(OS, censoringOS) ~ dat[[i]], data=dat)      
+km_trt_fit
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = F,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,2000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("OS over",i,"per",k))
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+#print(p)
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#km_trt_fit
+#print(p)
+
+#disease free survival
+pw<-pairwise_survdiff(Surv(DFS, censoringDFS) ~ metacluster,data = surv_dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+ #  symbols = c("****", "***", "**", "*", "+", "."),
+  # abbr.colnames = FALSE, na = " "))
+km_trt_fit <- survfit(Surv(DFS, censoringDFS) ~ dat[[i]], data=dat)   
+km_trt_fit
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = T,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,2000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("DFS over",i,"per",k))#+
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#print(p)
+#km_trt_fit
+  }
+}
+```
+
+## Lasso-regressed cox-ph model  
+including clinical parameters, patient metacluster and Immune cell categories (CD4 vs CD8) classified as high mid low as well as the proportion (continuous).   
+```{r, coxph Immune cell category proportions high mid low, message=FALSE, warning=FALSE, echo=FALSE, out.width="50%", fig.width=6, fig.height=6}
+surv_dat$metacluster <-as.numeric(surv_dat$metacluster)
+fd_test <- fastDummies::dummy_cols(surv_dat, select_columns = c(paste(surv),"Typ","Grade","T.new","N","M.new","Stage","Smok","Gender", "metacluster")) #
+
+fd_test<-fd_test[!fd_test$OS == 0, ]
+time <- fd_test$OS
+status <- fd_test$censoringOS
+
+rownames(fd_test) <- fd_test$Patient_ID
+
+fd_test <-fd_test %>%select(-c(paste(surv),"metacluster",colnames(clinical.data),contains("censor"))) #)),"AG" #,NT,"Area","TMA_ImageID"
+
+fd_test[is.na(fd_test)] <- 0
+fd_test_matrix <-data.matrix(fd_test)
+
+
+#determine lambda
+cv.fit <- cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+fit <- glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+#plot(cv.fit)
+#cv.fit$lambda.min
+
+#loop to determine optimal lambda for lasso regression
+MSEs <- NULL
+for (i in 1:100){
+                 cv <-  cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+                 MSEs <- cbind(MSEs, cv$cvm)
+             }
+  rownames(MSEs) <- cv$lambda
+  lambda.min <- as.numeric(names(which.min(rowMeans(MSEs))))
+
+#coef(fit, s = lambda.min)
+Coefficients <- coef(fit, s = lambda.min)
+Active.Index <- which(Coefficients != 0)
+Active.Coefficients <- Coefficients[Active.Index]
+#Coefficients
+
+
+active_coefficients <- Coefficients[,1] != 0
+x <- fd_test_matrix[,active_coefficients]
+x <- data.frame(x)
+
+vct <-colnames(x)
+coxdf<-coxph(Surv(time,status)~.,data=x)
+
+td_res = tidy(coxdf, exponentiate = TRUE)
+td_res = td_res %>% arrange(estimate) %>% mutate(term = factor(term,levels = term))
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.high = estimate + std.error)
+
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.low = estimate - std.error)
+td_res<-td_res[!td_res$std.error == 0, ]
+na_td_res <- td_res[-grep("NA",td_res$term),]
+
+
+p <-ggplot(na_td_res, aes(x = term, y = estimate,color =p.value < 0.05)) +
+geom_point(size = 4) +
+geom_errorbar(aes(ymax = conf.high, ymin = conf.low))+
+scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+geom_hline(yintercept = 1,color = 'black')+
+theme_bw()+
+scale_colour_tableau()
+p
+#ggsave(file=file.path(plot_folder, paste("CoxPH_Tcell-Category_Proportions_high-mid-low_Lasso.pdf")), width=10, height=10, plot=p)
+
+ggforest(coxdf, data =  (fd_test %>% select(-contains("NA"))))
+
+
+#pdf(file=file.path(plot_folder,paste("COX_selectedFactors_glmnet.pdf")))
+#ggforest(coxdf, data = fd_test)
+#dev.off()
+```
+
+#Correlation of Immune cell category proportions with clinical parameters
+```{r, Correlation of non Immune cell category proportions and clinical parameters, message=FALSE, warning=FALSE, echo=FALSE, eval=F}
+immune.sce_pat$NeoAdj <- ifelse(immune.sce_pat$Chemo==1 |immune.sce_pat$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+tdat <-as.data.frame(table(immune.sce_pat[,immune.sce_pat$Patient_ID!="Control"&
+                                          immune.sce_pat$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat$DX.name=="Squamous cell carcinoma"]$Patient_ID,
+                           immune.sce_pat[,immune.sce_pat$Patient_ID!="Control"&
+                                          immune.sce_pat$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("Patient_ID","Phenotype","n")
+
+tdat <-tdat %>%
+    dplyr::group_by(Patient_ID) %>%
+    dplyr::mutate(freq = n / sum(n))
+tdat[is.na(tdat)] <- 0
+tdat$Phenotype <-droplevels(tdat$Phenotype)
+tdat$Patient_ID <-droplevels(tdat$Patient_ID)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="freq",names_prefix = "")
+tdat_wide <-tdat_wide[!tdat_wide$Patient_ID%in% neoadj_pat$Patient_ID,]
+
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+tdat_wide <-merge(tdat_wide, clinical.data, by="Patient_ID")
+tdat_wide_as <-tdat_wide[tdat_wide$DX.name=="Adenocarcinoma" | tdat_wide$DX.name=="Squamous cell carcinoma",]
+tdat_wide_as$LN.Met <-ifelse(tdat_wide_as$LN.Met=="LN Metastases", 1,0)
+tdat_wide_as$Dist.Met <-ifelse(tdat_wide_as$Dist.Met=="Dist. Metastases", 1,0)
+
+c.param <- c("Gender","T.new","N","M.new","Dist.Met","LN.Met","Stage")
+for(i in c.param){
+  print(i)
+print(cor.test(tdat_wide_as$Bcell,tdat_wide_as[[i]], method="spearman", exact=F))
+print(cor.test(tdat_wide_as$Neutrophil,tdat_wide_as[[i]], method="spearman", exact=F))
+print(cor.test(tdat_wide_as$Myeloid,tdat_wide_as[[i]], method="spearman", exact=F))
+print(cor.test(tdat_wide_as$Tcell,tdat_wide_as[[i]], method="spearman", exact=F))
+  }
+```
+
+
+In group comparison (Wilcoxon for 2 groups or KW for >2 groups) for Immune cell categories over clinical variables:  
+  - T.new (TNM)
+  - N (TNM)
+  - M.new (TNM)
+  - Relapse
+  - Grade
+  - Stage
+  - Gender
+  - Typ (Tumour Type)
+  - Dist.Met (Distant metastases yes/no)
+  - LN.Met (Lymph node metastases yes/no)
+  
+## Kruskal-Wallis / Wilcoxon Immune cell category ~ clinical data excluding neoadjuvant therapy
+```{r, KW W Immune cell category proportions WO neo, fig.width=15, fig.height=10, message=FALSE, warning=FALSE, echo=FALSE}
+df <- as.data.frame(colData(immune.sce_pat[,immune.sce_pat$Patient_ID!="Control"&
+                                          immune.sce_pat$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat$DX.name=="Squamous cell carcinoma"]))
+
+#remove neoadj patients
+df <-df[!df$Patient_ID%in% neoadj_pat$Patient_ID,]
+categories <- c("Dist.Met","LN.Met", "T.new","M.new","N","Relapse","DX.name","Stage","Grade","Gender") 
+
+plot_list <- list()
+
+for (i in (categories)) {
+
+    t <- table(df$cell_subtype, df$Patient_ID)
+    t <- prop.table(t, margin=2)
+    t <- as.data.frame(t)
+    colnames(t) <- c("Phenotype", "Patient_ID","freq")
+    t<-merge(t, clinical.data, by.x="Patient_ID", by.y="Patient_ID")
+    tdat <-t
+    tdat$i <-as.factor(tdat[[i]])
+    tdat <-tdat %>% drop_na(i)
+    tdat$Phenotype <-droplevels(tdat$Phenotype)
+  
+  for (j in unique(t$Phenotype)){
+    tdat<-t
+    tdat[[i]] <-as.factor(tdat[[i]])
+    tdat <-tdat %>% drop_na(i)
+    tdat$i <-as.factor(tdat[[i]])
+    tdat$Phenotype <-droplevels(tdat$Phenotype)
+
+    tdat <-subset(tdat, Phenotype==j)
+
+    if (length(unique(tdat[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- tdat%>%
+     group_by(Phenotype) %>%
+     dunn_test(freq~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(tdat, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_viridis_d()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Proportion")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(is.element(i,colnames(clinical.data)) == TRUE){
+    
+      tdat<-t
+      tdat[[i]] <-as.factor(tdat[[i]])
+      tdat <-tdat %>% drop_na(i)
+      tdat$Phenotype <-droplevels(tdat$Phenotype)
+
+      tdat <-subset(tdat, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- tdat %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(tdat$freq~tdat[[i]], paired=F)$p.value)
+      tdat <- merge(tdat, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      tdat$p.wt <- paste0('p=',round(tdat$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(tdat, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+      
+        scale_color_viridis_d()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Proportion", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=7) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+  #pdf(file=file.path(plot_folder, paste0("KW_W_Tcell-Category_Proportions_WOneo",i,".pdf")), width=10, height=5)
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=length(unique(t$Phenotype)))
+ # dev.off()
+}
+```
+
+## Neoadjuvantly treated patients are included, the same categories are used plus:  
+- NeoAdj (Neoadjuvant therapy yes/no)
+- Chemo (Neoadjuvant therapy = chemotherapy)
+- Radio (Neoadjuvant therapy = radiotherapy)
+```{r, KW W Immune cell category proportions with NEO, fig.width=15, fig.height=10, message=FALSE, warning=FALSE, echo=FALSE}
+df <- as.data.frame(colData(immune.sce_pat[,immune.sce_pat$Patient_ID!="Control"&
+                                          immune.sce_pat$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat$DX.name=="Squamous cell carcinoma"]))
+
+categories <- c("Dist.Met","LN.Met", "T.new","M.new","N","Relapse","DX.name","Stage","Grade","Gender","Chemo","Radio","NeoAdj")
+
+plot_list <- list()
+
+for (i in (categories)) {
+
+    t <- table(df$cell_subtype, df$Patient_ID)
+    t <- prop.table(t, margin=2)
+    t <- as.data.frame(t)
+    colnames(t) <- c("Phenotype", "Patient_ID","freq")
+    t<-merge(t, clinical.data, by.x="Patient_ID", by.y="Patient_ID")
+    tdat <-t
+    tdat$i <-as.factor(tdat[[i]])
+    tdat <-tdat %>% drop_na(i)
+    tdat$Phenotype <-droplevels(tdat$Phenotype)
+  
+  for (j in unique(t$Phenotype)){
+    tdat<-t
+    tdat[[i]] <-as.factor(tdat[[i]])
+    tdat <-tdat %>% drop_na(i)
+    tdat$i <-as.factor(tdat[[i]])
+    tdat$Phenotype <-droplevels(tdat$Phenotype)
+
+    tdat <-subset(tdat, Phenotype==j)
+
+    if (length(unique(tdat[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- tdat%>%
+     group_by(Phenotype) %>%
+     dunn_test(freq~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(tdat, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+      geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=4, strip.position="top")+
+      scale_color_viridis_d()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Proportion")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+    else {
+if(is.element(i,colnames(clinical.data)) == TRUE){
+    
+      tdat<-t
+      tdat[[i]] <-as.factor(tdat[[i]])
+      tdat <-tdat %>% drop_na(i)
+      tdat$Phenotype <-droplevels(tdat$Phenotype)
+
+      tdat <-subset(tdat, Phenotype==j)
+      detach("package:dplyr", unload=TRUE)
+      library(dplyr)
+      
+      pvalues <- tdat %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(tdat$freq~tdat[[i]], paired=F)$p.value)
+      tdat <- merge(tdat, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      tdat$p.wt <- paste0('p=',round(tdat$p, digits=3))
+
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(tdat, aes(x= .data[[i]], y = freq, colour=.data[[i]]))+
+        geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=4, strip.position="top")+
+        theme(axis.title.x=element_text("Phenotype"))+
+      
+        scale_color_viridis_d()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(x=paste(i), y="Proportion", fill="Area_Phenotype")+
+        theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+   }  
+
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=7) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+#  pdf(file=file.path(plot_folder, paste0("KW_W_Tcell-Category_Proportions_Wneo",i,".pdf")), width=10, height=5)
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=length(unique(t$Phenotype)))
+ # dev.off()
+}
+```
+
+
+
+## **Immune cell category**
+## **Densities**
+Generally, densities are first calculated per tissue area. For patients with more than 1 image, the average density is calculated subsequently.  
+Optimal number of Immune cell category densities patients metaclusters:
+```{r, Immune cell category density optimal number of clusters, message=FALSE, warning=FALSE, echo=FALSE, out.width="50%", fig.width=6, fig.height=4}
+#Calculate Densities
+tdat <-as.data.frame(table(immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=immune.sce_pat.roi$RoiID,
+                                "Area"=immune.sce_pat.roi$Area_px_Core,
+                                "Patient_ID"=immune.sce_pat.roi$Patient_ID,
+                                "DX.name"=immune.sce_pat.roi$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Patient_ID) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+  tdat <-tdat %>% 
+  group_by(Patient_ID,Phenotype) %>%
+  summarise(across(-c(RoiID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+  #t <-merge(t, clinical.data, by="Patient_ID")
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+
+#tdat_wide <-tdat_wide[!tdat_wide$Patient_ID%in% neoadj_pat$Patient_ID,]
+
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+hc <- hclust(dist(tdat_m[,-1]),"ward.D2")
+
+#devtools::install_github("kassambara/factoextra")
+library(FactoMineR)
+library(factoextra)
+sbg <-cutree(hc, k=8)
+fviz_cluster(list(data = tdat_wide[,-1], cluster = sbg))
+
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "wss", k.max=20)
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "gap_stat", k.max=20)
+fviz_nbclust(tdat_wide[,-1], FUN = hcut, method = "silhouette", k.max=20)
+
+#install.packages("cluster")
+library(cluster)
+gap_stat <- clusGap(tdat_wide[,-1], FUN = hcut, nstart = 25, K.max = 10, B = 100)
+fviz_gap_stat(gap_stat)
+
+# Compute distance matrix
+res.dist <- dist(tdat_wide[,-1], method = "euclidean")
+```
+
+```{r, Calculate densities Immune cell category, message=FALSE, warning=FALSE, echo=FALSE}
+tdat <-as.data.frame(table(immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=immune.sce_pat.roi$RoiID,
+                                "Area"=immune.sce_pat.roi$Area_px_Core,
+                                "Patient_ID"=immune.sce_pat.roi$Patient_ID,
+                                "DX.name"=immune.sce_pat.roi$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Patient_ID) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+  tdat <-tdat %>% 
+  group_by(Patient_ID,Phenotype) %>%
+  summarise(across(-c(RoiID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+  #t <-merge(t, clinical.data, by="Patient_ID")
+  
+  
+#CAF type distribution over all patients
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+tdat_m <-as.matrix(tdat_wide)
+rownames(tdat_m)<-tdat_wide$Patient_ID
+
+
+hc <- hclust(dist(tdat_m[,-1]),"ward.D2")
+#order Patients after clustering results
+tdat_wide$Patient_ID <- factor(tdat_wide$Patient_ID, levels = labels(hc))
+tdat$Patient_ID <- factor(tdat$Patient_ID, levels = labels(hc))
+```
+
+## Barplot showing absolute density per patietn coloured by Immune cell category together with hierarchical clustering tree coloured by patient metaclusters.
+```{r,Barolot Immune cell category densities, fig.width=12, fig.height=6, message=FALSE, warning=FALSE, echo=FALSE}
+#barolot (sqrt of density)
+p <-ggplot(tdat,aes(y=sqrt(density),x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau()+
+    theme(legend.position="bottom")#+theme(legend.position = "none")
+
+#barplot total density
+p <-ggplot(tdat,aes(y=density,x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+
+    theme(legend.position="bottom")#+theme(legend.position = "none")
+
+
+#coloured dendrogram
+ggdend <-hc%>% as.dendrogram() %>% dendextend::set("branches_k_color", k = 2) %>% as.ggdend()
+p1 <-ggplot(ggdend, labels = F)+scale_x_continuous(expand = c(0, 0))+
+  theme_void()
+pg <-plot_grid(p1,p, align="v", ncol=1)
+pg
+#ggsave(plot=pg, file=file.path(plot_folder, paste("Barplot_Tcell-Category-Densities_HC_ordered_dendro.pdf")), width=12, height=6)
+```
+Add patient metacluster to data and plot clusters separately for better identification
+```{r,Immune cell category densities merge hc, message=FALSE, warning=FALSE, echo=FALSE}
+clinical.data = clinical.data[!duplicated(clinical.data$Patient_ID),]
+
+#cut dendrogram, add metacluster info to tdat
+ct <-as.data.frame(cutree(hc, k=2))
+
+colnames(ct)<-"metacluster"
+ct$metacluster <-as.factor(ct$metacluster)
+ct$Patient_ID <- rownames(ct)
+
+tdat_wide_ct <-left_join(tdat_wide, ct, by="Patient_ID")
+tdat_wide_ct <- left_join(tdat_wide_ct, clinical.data, by="Patient_ID")
+table(tdat_wide_ct$metacluster)
+
+#split barlot by metacluster
+tdat_ct <-merge(tdat, ct, by="Patient_ID")
+ggplot(tdat_ct,aes(y=density,x=Patient_ID, fill=Phenotype))+geom_bar(stat="identity")+scale_fill_tableau("Tableau 20")+
+    theme(legend.position="bottom")+
+  facet_grid(~ metacluster, scales = "free", space = "free")
+```
+
+## Survival analysis over Immune cell category densities high low.  
+- High > median
+- Low < median
+```{r, surv_dat Immune cell category densities high low, message=FALSE, warning=FALSE, echo=FALSE}
+surv_dat <-as.data.table(tdat_wide_ct)
+surv_dat<- surv_dat[is.na(surv_dat$OS) !=T,]
+
+# Censoring for OS (1 = event (death due to disease), 0 = censored)
+surv_dat[,censoringOS := 0]
+surv_dat[Ev.O == 1,censoringOS := 1]
+
+# Censoring for disease free survival (1 = event (recurrence), 0 = censored)
+surv_dat[ ,censoringDFS := 0]
+surv_dat[ OS > DFS, censoringDFS := 1]
+surv_dat$censoringDFS <-as.numeric(as.character(surv_dat$censoringDFS))
+
+surv_dat <-surv_dat[surv_dat$DX.name=="Adenocarcinoma"|surv_dat$DX.name=="Squamous cell carcinoma",]
+surv_dat <-surv_dat[!surv_dat$Patient_ID%in% neoadj_pat$Patient_ID,]
+
+surv_dat$total_density <- rowSums(surv_dat[,2:14])
+
+#high low
+surv_dat$Density_G <- ifelse(surv_dat$total_density >summary(surv_dat$total_density)[3],"Density high","Density low")
+surv_dat$Bcell_G <- ifelse(surv_dat$Bcell >summary(surv_dat$Bcell)[3],"Bcell high","Bcell low")
+surv_dat$Myeloid_G <- ifelse(surv_dat$Myeloid >summary(surv_dat$Myeloid)[3],"Myeloid high","Myeloid low")
+surv_dat$Neutrophil_G <- ifelse(surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[3],"Neutrophil high","Neutrophil low")
+
+surv_dat$CD4_G <- ifelse(surv_dat$CD4 >summary(surv_dat$CD4)[3],"CD4 high","CD4 low")
+surv_dat$CD4_Treg_G <- ifelse(surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[3],"CD4 Treg high","CD4 Treg low")
+surv_dat$CD4_IDO_G <- ifelse(surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[3],"CD4 IDO high","CD4 IDO low")
+surv_dat$CD4_PD1_G <- ifelse(surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[3],"CD4 PD1 high","CD4 PD1 low")
+surv_dat$CD4_TCF_G <- ifelse(surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[3],"CD4 TCF1/7 high","CD4 TCF1/7 low")
+surv_dat$CD4_ki67_G <- ifelse(surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[3],"dividing CD4 high","dividing CD4 low")
+
+surv_dat$CD8_IDO_G <- ifelse(surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[3],"CD8 IDO high","CD8 IDO low")
+surv_dat$CD8_TCF_G <- ifelse(surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[3],"CD8 TCF1/7 high","CD8 TCF1/7 low")
+surv_dat$CD8_G <- ifelse(surv_dat$CD8 >summary(surv_dat$CD8)[3],"CD8 high","CD8 low")
+surv_dat$CD8_ki67_G <- ifelse(surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[3],"dividing CD8 high","dividing CD8 low")
+
+surv <-c("Neutrophil_G","Myeloid_G","Bcell_G","CD8_G","CD4_G","CD4_Treg_G","CD4_IDO_G","CD4_PD1_G","CD4_TCF_G","CD4_ki67_G", "CD8_IDO_G","CD8_TCF_G","CD8_ki67_G","metacluster")
+
+```
+
+#CoxPH for Immune cell category density corrected for Stage, Grade and M
+```{r, Coxph Immune cell category density, echo=F, message=FALSE, warning=FALSE}
+surv_dat
+surv_dat<-surv_dat[!surv_dat$OS == 0, ]
+time <- surv_dat$OS
+status <- surv_dat$censoringOS
+surv_dat$metacluster <-as.factor(surv_dat$metacluster)
+surv_dat$Grade <-as.numeric(surv_dat$Grade)
+rownames(surv_dat) <- surv_dat$Patient_ID
+res.cox <- coxph(Surv(time, status) ~ metacluster, data = surv_dat)
+res.cox
+
+
+res.cox <- coxph(Surv(time, status) ~   Myeloid+ Bcell+ Neutrophil + CD4 + CD8+`TCF1/7_CD4`+ki67_CD8+`TCF1/7_CD8`+PD1_CD4+IDO_CD8 +ki67_CD4+IDO_CD4+CD4_Treg+ Stage+Grade+M.new, data =  surv_dat)
+
+#res.cox <- coxph(Surv(time, status) ~ `CD4+`+tpCAF+iCAF+mCAF+dCAF+vCAF+`SMA+ CAF`+`IDO+ CAF`+`dividing tpCAF`+`hypoxic CAF`+Grade, data =  surv_dat)
+summary(res.cox)
+
+
+td_res = tidy(res.cox, exponentiate = TRUE)
+td_res = td_res %>% arrange(estimate) %>% mutate(term = factor(term,levels = term))
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.high = estimate + std.error)
+
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.low = estimate - std.error)
+td_res<-td_res[!td_res$std.error == 0, ]
+td_res <-td_res[td_res$term !="Grade"&
+                  td_res$term !="Stage"&
+                  td_res$term !="M.new",]
+
+p <-ggplot(td_res, aes(x = term, y = estimate,color =p.value < 0.05)) +
+geom_point(size = 4) +
+geom_errorbar(aes(ymax = conf.high, ymin = conf.low))+
+scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+#xlim(0,2)+
+geom_hline(yintercept = 1,color = 'black')+
+theme_bw()+
+scale_colour_tableau()
+#
+plot(p)
+```
+
+## Not split by tumour type (AC and SQC together)
+```{r, survival Immune cell category densities high low not split, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=4, fig.width=6}
+#Not split
+#surv <-c("metacluster")
+library(survminer)
+
+for (i in surv){
+  #for (k in unique(surv_dat$DX.name)){
+    #dat <-surv_dat[surv_dat$DX.name==k,]
+  dat <-surv_dat
+  k="AC & SCC together"
+#OS
+km_trt_fit <- survfit(Surv(OS, censoringOS) ~ dat[[i]], data=dat)      
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = F,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("OS over",i,"per",k))
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+#pdf(file=file.path(plot_folder, paste0("Survival_Density-cell_subtype_hi-low_OS over",i,"_per_",k,".pdf")))
+#print(p,newpage=FALSE)
+#dev.off()
+
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#km_trt_fit
+#print(p)
+
+pw<-pairwise_survdiff(Surv(OS, censoringOS) ~ metacluster,data = dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+#   abbr.colnames = FALSE, na = " "))
+#km_trt_fit
+
+#disease free survival
+km_trt_fit <- survfit(Surv(DFS, censoringDFS) ~ dat[[i]], data=dat)      
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = T,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("DFS over",i,"per",k))#+
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+#pdf(file=file.path(plot_folder, paste0("Survival_Density-cell_subtype_hi-low_DFS over",i,"_per_",k,".pdf")))
+#print(p,newpage=FALSE)
+#dev.off()
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#print(p)
+#km_trt_fit
+
+pw<-pairwise_survdiff(Surv(DFS, censoringDFS) ~ metacluster,data = dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+#   abbr.colnames = FALSE, na = " "))
+km_trt_fit
+}
+```
+
+## Split by tumour type (AC and SQC individually)
+```{r, survival Immune cell category densities high low split, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=4, fig.width=6}
+#Split
+library(survminer)
+
+for (i in surv){
+  for (k in unique(surv_dat$DX.name)){
+    dat <-surv_dat[surv_dat$DX.name==k,]
+
+#high low
+surv_dat$Density_G <- ifelse(surv_dat$total_density >summary(surv_dat$total_density)[3],"Density high","Density low")
+surv_dat$Bcell_G <- ifelse(surv_dat$Bcell >summary(surv_dat$Bcell)[3],"Bcell high","Bcell low")
+surv_dat$Myeloid_G <- ifelse(surv_dat$Myeloid >summary(surv_dat$Myeloid)[3],"Myeloid high","Myeloid low")
+surv_dat$Neutrophil_G <- ifelse(surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[3],"Neutrophil high","Neutrophil low")
+
+surv_dat$CD4_G <- ifelse(surv_dat$CD4 >summary(surv_dat$CD4)[3],"CD4 high","CD4 low")
+surv_dat$CD4_Treg_G <- ifelse(surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[3],"CD4 Treg high","CD4 Treg low")
+surv_dat$CD4_IDO_G <- ifelse(surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[3],"CD4 IDO high","CD4 IDO low")
+surv_dat$CD4_PD1_G <- ifelse(surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[3],"CD4 PD1 high","CD4 PD1 low")
+surv_dat$CD4_TCF_G <- ifelse(surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[3],"CD4 TCF1/7 high","CD4 TCF1/7 low")
+surv_dat$CD4_ki67_G <- ifelse(surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[3],"dividing CD4 high","dividing CD4 low")
+
+surv_dat$CD8_IDO_G <- ifelse(surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[3],"CD8 IDO high","CD8 IDO low")
+surv_dat$CD8_TCF_G <- ifelse(surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[3],"CD8 TCF1/7 high","CD8 TCF1/7 low")
+surv_dat$CD8_G <- ifelse(surv_dat$CD8 >summary(surv_dat$CD8)[3],"CD8 high","CD8 low")
+surv_dat$CD8_ki67_G <- ifelse(surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[3],"dividing CD8 high","dividing CD8 low")
+
+#OS
+pw<-pairwise_survdiff(Surv(OS, censoringOS) ~ metacluster,data = dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+#   abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(OS, censoringOS) ~ dat[[i]], data=dat)  
+km_trt_fit
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = F,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("OS over",i,"per",k))
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+#pdf(file=file.path(plot_folder, paste0("Survival_Density-cell_subtype_hi-low_OS over",i,"_per_",k,".pdf")))
+#print(p,newpage=FALSE)
+#dev.off()
+
+
+#print(p)
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#km_trt_fit
+#print(p)
+
+#disease free survival
+pw<-pairwise_survdiff(Surv(DFS, censoringDFS) ~ metacluster,data = dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+ #  abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(DFS, censoringDFS) ~ dat[[i]], data=dat)      
+km_trt_fit
+
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = T,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("DFS over",i,"per",k))#+
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+#pdf(file=file.path(plot_folder, paste0("Survival_Density-cell_subtype_hi-low_DFS over",i,"_per_",k,".pdf")))
+#print(p,newpage=FALSE)
+#dev.off()
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#print(p)
+#km_trt_fit
+  }
+}
+```
+
+## Lasso-regressed cox-ph model  
+Including clinical parameters, patient metacluster and Immune cell categories (CD4 vs CD8) classified as high / low as well as the densities (continuous).   
+```{r, coxph Immune cell category densities high-low, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=6, fig.width=6}
+surv_dat$metacluster <-as.numeric(surv_dat$metacluster)
+fd_test <- fastDummies::dummy_cols(surv_dat, select_columns = c("Density_G",paste(surv),"Typ","Grade","T.new","N","M.new","Stage","Smok","Gender", "metacluster")) #
+
+fd_test<-fd_test[!fd_test$OS == 0, ]
+time <- fd_test$OS
+status <- fd_test$censoringOS
+
+rownames(fd_test) <- fd_test$Patient_ID
+
+fd_test <-fd_test %>%select(-c(paste(surv),"Density_G","metacluster",colnames(clinical.data),contains("censor"))) #)),"AG" #,NT,"Area","TMA_ImageID"
+
+fd_test[is.na(fd_test)] <- 0
+fd_test_matrix <-data.matrix(fd_test)
+
+
+#determine lambda
+cv.fit <- cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+fit <- glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+#plot(cv.fit)
+#cv.fit$lambda.min
+
+#loop to determine optimal lambda for lasso regression
+MSEs <- NULL
+for (i in 1:100){
+                 cv <-  cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+                 MSEs <- cbind(MSEs, cv$cvm)
+             }
+  rownames(MSEs) <- cv$lambda
+  lambda.min <- as.numeric(names(which.min(rowMeans(MSEs))))
+
+#coef(fit, s = lambda.min)
+Coefficients <- coef(fit, s = lambda.min)
+Active.Index <- which(Coefficients != 0)
+Active.Coefficients <- Coefficients[Active.Index]
+#Coefficients
+
+
+active_coefficients <- Coefficients[,1] != 0
+x <- fd_test_matrix[,active_coefficients]
+x <- data.frame(x)
+
+vct <-colnames(x)
+coxdf<-coxph(Surv(time,status)~.,data=x)
+
+td_res = tidy(coxdf, exponentiate = TRUE)
+td_res = td_res %>% arrange(estimate) %>% mutate(term = factor(term,levels = term))
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.high = estimate + std.error)
+
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.low = estimate - std.error)
+td_res<-td_res[!td_res$std.error == 0, ]
+na_td_res <- td_res[-grep("NA",td_res$term),]
+
+
+p <-ggplot(na_td_res, aes(x = term, y = estimate,color =p.value < 0.05)) +
+geom_point(size = 4) +
+geom_errorbar(aes(ymax = conf.high, ymin = conf.low))+
+scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+geom_hline(yintercept = 1,color = 'black')+
+theme_bw()+
+scale_colour_tableau()
+p
+#ggsave(file=file.path(plot_folder, paste("CoxPH_Tcell-Category_Density_high-low_Lasso.pdf")), width=10, height=10, plot=p)
+
+ggforest(coxdf, data =  (fd_test %>% select(-contains("NA"))))
+
+
+#pdf(file=file.path(plot_folder,paste("COX_selectedFactors_glmnet.pdf")))
+#ggforest(coxdf, data = fd_test)
+#dev.off()
+```
+
+## Survival Immune cell category densities high-mid-low     
+- high    > 3rd quantile   
+- mid     > 1st quantile < 3rd quantile   
+- low     < 1st quantile   
+```{r, surv_dat Immune cell category densities high mid low, message=FALSE, warning=FALSE, echo=FALSE}
+surv_dat <-as.data.table(tdat_wide_ct)
+surv_dat<- surv_dat[is.na(surv_dat$OS) !=T,]
+
+# Censoring for OS (1 = event (death due to disease), 0 = censored)
+surv_dat[,censoringOS := 0]
+surv_dat[Ev.O == 1,censoringOS := 1]
+
+# Censoring for disease free survival (1 = event (recurrence), 0 = censored)
+surv_dat[ ,censoringDFS := 0]
+surv_dat[ OS > DFS, censoringDFS := 1]
+surv_dat$censoringDFS <-as.numeric(as.character(surv_dat$censoringDFS))
+
+surv_dat <-surv_dat[surv_dat$DX.name=="Adenocarcinoma"|surv_dat$DX.name=="Squamous cell carcinoma",]
+surv_dat <-surv_dat[!surv_dat$Patient_ID%in% neoadj_pat$Patient_ID,]
+
+surv_dat$total_density <- rowSums(surv_dat[,2:14])
+
+#High Med Low
+surv_dat$Density_G[surv_dat$total_density >summary(surv_dat$total_density)[5]] <-"Density high"
+surv_dat$Density_G[surv_dat$total_density <summary(surv_dat$total_density)[2]] <-"Density low"
+surv_dat$Density_G[surv_dat$total_density >summary(surv_dat$total_density)[2]& surv_dat$total_density<summary(surv_dat$total_density)[5]] <-"Density medium"
+
+surv_dat$Neutrophil_G[surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[5]] <-"Neutrophil high"
+surv_dat$Neutrophil_G[surv_dat$Neutrophil <summary(surv_dat$Neutrophil)[2]] <-"Neutrophil low"
+surv_dat$Neutrophil_G[surv_dat$Neutrophil >summary(surv_dat$Neutrophil)[2]& surv_dat$Neutrophil<summary(surv_dat$Neutrophil)[5]] <-"Neutrophil medium"
+
+surv_dat$Myeloid_G[surv_dat$Myeloid >summary(surv_dat$Myeloid)[5]] <-"Myeloid high"
+surv_dat$Myeloid_G[surv_dat$Myeloid <summary(surv_dat$Myeloid)[2]] <-"Myeloid low"
+surv_dat$Myeloid_G[surv_dat$Myeloid >summary(surv_dat$Myeloid)[2]& surv_dat$Myeloid<summary(surv_dat$Myeloid)[5]] <-"Myeloid medium"
+
+surv_dat$Bcell_G[surv_dat$Bcell >summary(surv_dat$Bcell)[5]] <-"Bcell high"
+surv_dat$Bcell_G[surv_dat$Bcell <summary(surv_dat$Bcell)[2]] <-"Bcell low"
+surv_dat$Bcell_G[surv_dat$Bcell >summary(surv_dat$Bcell)[2]& surv_dat$Bcell<summary(surv_dat$Bcell)[5]] <-"Bcell medium"
+surv_dat$CD4_G[surv_dat$CD4 >summary(surv_dat$CD4)[5]] <-"CD4 high"
+surv_dat$CD4_G[surv_dat$CD4 <summary(surv_dat$CD4)[2]] <-"CD4 low"
+surv_dat$CD4_G[surv_dat$CD4 >summary(surv_dat$CD4)[2]& surv_dat$CD4<summary(surv_dat$CD4)[5]] <-"CD4 medium"
+
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[5]] <-"CD4 Treg high"
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg <summary(surv_dat$CD4_Treg)[2]] <-"CD4 Treg low"
+surv_dat$CD4_Treg_G[surv_dat$CD4_Treg >summary(surv_dat$CD4_Treg)[2]& surv_dat$CD4_Treg<summary(surv_dat$CD4_Treg)[5]] <-"CD4 T reg medium"
+
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[5]] <-"IDO_CD4 high"
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 <summary(surv_dat$IDO_CD4)[2]] <-"IDO_CD4 low"
+surv_dat$CD4_IDO_G[surv_dat$IDO_CD4 >summary(surv_dat$IDO_CD4)[2]& surv_dat$IDO_CD4<summary(surv_dat$IDO_CD4)[5]] <-"IDO_CD4 medium"
+
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[5]] <-"PD1_CD4 high"
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 <summary(surv_dat$PD1_CD4)[2]] <-"PD1_CD4 low"
+surv_dat$CD4_PD1_G[surv_dat$PD1_CD4 >summary(surv_dat$PD1_CD4)[2]& surv_dat$PD1_CD4<summary(surv_dat$PD1_CD4)[5]] <-"PD1_CD4 medium"
+
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[5]] <-"CD4 TCF1/7 high"
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` <summary(surv_dat$`TCF1/7_CD4`)[2]] <-"CD4 TCF1/7  low"
+surv_dat$CD4_TCF_G[surv_dat$`TCF1/7_CD4` >summary(surv_dat$`TCF1/7_CD4`)[2]& surv_dat$`TCF1/7_CD4`<summary(surv_dat$`TCF1/7_CD4`)[5]] <-"CD4 TCF1/7  medium"
+
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[5]] <-"CD4 dividing high"
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 <summary(surv_dat$ki67_CD4)[2]] <-"CD4 dividing low"
+surv_dat$CD4_ki67_G[surv_dat$ki67_CD4 >summary(surv_dat$ki67_CD4)[2]& surv_dat$ki67_CD4<summary(surv_dat$ki67_CD4)[5]] <-"CD4 dividing medium"
+
+surv_dat$CD8_G[surv_dat$CD8 >summary(surv_dat$CD8)[5]] <-"CD8 high"
+surv_dat$CD8_G[surv_dat$CD8 <summary(surv_dat$CD8)[2]] <-"CD8 low"
+surv_dat$CD8_G[surv_dat$CD8 >summary(surv_dat$CD8)[2]& surv_dat$CD8<summary(surv_dat$CD8)[5]] <-"CD8 medium"
+
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[5]] <-"CD8 IDO high"
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 <summary(surv_dat$IDO_CD8)[2]] <-"CD8 IDO low"
+surv_dat$CD8_IDO_G[surv_dat$IDO_CD8 >summary(surv_dat$IDO_CD8)[2]& surv_dat$IDO_CD8<summary(surv_dat$IDO_CD8)[5]] <-"CD8 IDO medium"
+
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[5]] <-"CD8 TCF1/7 high"
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` <summary(surv_dat$`TCF1/7_CD8`)[2]] <-"CD8 TCF1/7 low"
+surv_dat$CD8_TCF_G[surv_dat$`TCF1/7_CD8` >summary(surv_dat$`TCF1/7_CD8`)[2]& surv_dat$`TCF1/7_CD8`<summary(surv_dat$`TCF1/7_CD8`)[5]] <-"CD8 TCF1/7 medium"
+
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[5]] <-"CD8 dividing high"
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 <summary(surv_dat$ki67_CD8)[2]] <-"CD8 dividing low"
+surv_dat$CD8_ki67_G[surv_dat$ki67_CD8 >summary(surv_dat$ki67_CD8)[2]& surv_dat$ki67_CD8<summary(surv_dat$ki67_CD8)[5]] <-"CD8 dividing medium"
+
+```
+
+## Immune cell category densities split by tumour type
+```{r, survival Immune cell category densities high-mid-low not split, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=4, fig.width=6}
+#Not split
+library(survminer)
+
+for (i in surv){
+  dat <-surv_dat
+  k="AC & SCC together"
+#OS
+km_trt_fit <- survfit(Surv(OS, censoringOS) ~ dat[[i]], data=dat)      
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = F,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("OS over",i,"per",k))
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+#pdf(file=file.path(plot_folder, paste0("Survival_Density-cell_subtype_hi-med-low_OS over",i,"_per_",k,".pdf")))
+#print(p,newpage=FALSE)
+#dev.off()
+
+#print(p)
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#km_trt_fit
+#print(p)
+
+pw<-pairwise_survdiff(Surv(OS, censoringOS) ~ metacluster,data = dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+ #  abbr.colnames = FALSE, na = " "))
+km_trt_fit
+
+#disease free survival
+km_trt_fit <- survfit(Surv(DFS, censoringDFS) ~ dat[[i]], data=dat)      
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = T,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("DFS over",i,"per",k))#+
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+#pdf(file=file.path(plot_folder, paste0("Survival_Density-cell_subtype_hi-med-low_DFS over",i,"_per_",k,".pdf")))
+#print(p,newpage=FALSE)
+#dev.off()
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#print(p)
+#km_trt_fit
+
+pw<-pairwise_survdiff(Surv(DFS, censoringDFS) ~ metacluster,data = dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+ #  abbr.colnames = FALSE, na = " "))
+km_trt_fit
+}
+```
+
+## Immune cell category densities split by tumour type
+```{r, survival Immune cell category densities high-mid-low split, message=FALSE, warning=FALSE, echo=FALSE,out.width="50%", fig.height=4, fig.width=6}
+surv <-c("Neutrophil_G","Myeloid_G","Bcell_G","CD8_G","CD4_G","CD4_Treg_G","CD4_IDO_G","CD4_PD1_G","CD4_TCF_G","CD4_ki67_G", "CD8_IDO_G","CD8_TCF_G","CD8_ki67_G","metacluster")
+
+for (i in surv){
+  for (k in unique(surv_dat$DX.name)){
+    dat <-surv_dat[surv_dat$DX.name==k,]
+
+#High Med Low
+dat$Density_G[dat$total_density >summary(dat$total_density)[5]] <-"Density high"
+dat$Density_G[dat$total_density <summary(dat$total_density)[2]] <-"Density low"
+dat$Density_G[dat$total_density >summary(dat$total_density)[2]& dat$total_density<summary(dat$total_density)[5]] <-"Density medium"
+
+dat$Neutrophil_G[dat$Neutrophil >summary(dat$Neutrophil)[5]] <-"Neutrophil high"
+dat$Neutrophil_G[dat$Neutrophil <summary(dat$Neutrophil)[2]] <-"Neutrophil low"
+dat$Neutrophil_G[dat$Neutrophil >summary(dat$Neutrophil)[2]& dat$Neutrophil<summary(dat$Neutrophil)[5]] <-"Neutrophil medium"
+
+dat$Myeloid_G[dat$Myeloid >summary(dat$Myeloid)[5]] <-"Myeloid high"
+dat$Myeloid_G[dat$Myeloid <summary(dat$Myeloid)[2]] <-"Myeloid low"
+dat$Myeloid_G[dat$Myeloid >summary(dat$Myeloid)[2]& dat$Myeloid<summary(dat$Myeloid)[5]] <-"Myeloid medium"
+
+dat$Bcell_G[dat$Bcell >summary(dat$Bcell)[5]] <-"Bcell high"
+dat$Bcell_G[dat$Bcell <summary(dat$Bcell)[2]] <-"Bcell low"
+dat$Bcell_G[dat$Bcell >summary(dat$Bcell)[2]& dat$Bcell<summary(dat$Bcell)[5]] <-"Bcell medium"
+dat$CD4_G[dat$CD4 >summary(dat$CD4)[5]] <-"CD4 high"
+dat$CD4_G[dat$CD4 <summary(dat$CD4)[2]] <-"CD4 low"
+dat$CD4_G[dat$CD4 >summary(dat$CD4)[2]& dat$CD4<summary(dat$CD4)[5]] <-"CD4 medium"
+
+dat$CD4_Treg_G[dat$CD4_Treg >summary(dat$CD4_Treg)[5]] <-"CD4 Treg high"
+dat$CD4_Treg_G[dat$CD4_Treg <summary(dat$CD4_Treg)[2]] <-"CD4 Treg low"
+dat$CD4_Treg_G[dat$CD4_Treg >summary(dat$CD4_Treg)[2]& dat$CD4_Treg<summary(dat$CD4_Treg)[5]] <-"CD4 T reg medium"
+
+dat$CD4_IDO_G[dat$IDO_CD4 >summary(dat$IDO_CD4)[5]] <-"IDO_CD4 high"
+dat$CD4_IDO_G[dat$IDO_CD4 <summary(dat$IDO_CD4)[2]] <-"IDO_CD4 low"
+dat$CD4_IDO_G[dat$IDO_CD4 >summary(dat$IDO_CD4)[2]& dat$IDO_CD4<summary(dat$IDO_CD4)[5]] <-"IDO_CD4 medium"
+
+dat$CD4_PD1_G[dat$PD1_CD4 >summary(dat$PD1_CD4)[5]] <-"PD1_CD4 high"
+dat$CD4_PD1_G[dat$PD1_CD4 <summary(dat$PD1_CD4)[2]] <-"PD1_CD4 low"
+dat$CD4_PD1_G[dat$PD1_CD4 >summary(dat$PD1_CD4)[2]& dat$PD1_CD4<summary(dat$PD1_CD4)[5]] <-"PD1_CD4 medium"
+
+dat$CD4_TCF_G[dat$`TCF1/7_CD4` >summary(dat$`TCF1/7_CD4`)[5]] <-"CD4 TCF1/7 high"
+dat$CD4_TCF_G[dat$`TCF1/7_CD4` <summary(dat$`TCF1/7_CD4`)[2]] <-"CD4 TCF1/7  low"
+dat$CD4_TCF_G[dat$`TCF1/7_CD4` >summary(dat$`TCF1/7_CD4`)[2]& dat$`TCF1/7_CD4`<summary(dat$`TCF1/7_CD4`)[5]] <-"CD4 TCF1/7  medium"
+
+dat$CD4_ki67_G[dat$ki67_CD4 >summary(dat$ki67_CD4)[5]] <-"CD4 dividing high"
+dat$CD4_ki67_G[dat$ki67_CD4 <summary(dat$ki67_CD4)[2]] <-"CD4 dividing low"
+dat$CD4_ki67_G[dat$ki67_CD4 >summary(dat$ki67_CD4)[2]& dat$ki67_CD4<summary(dat$ki67_CD4)[5]] <-"CD4 dividing medium"
+
+dat$CD8_G[dat$CD8 >summary(dat$CD8)[5]] <-"CD8 high"
+dat$CD8_G[dat$CD8 <summary(dat$CD8)[2]] <-"CD8 low"
+dat$CD8_G[dat$CD8 >summary(dat$CD8)[2]& dat$CD8<summary(dat$CD8)[5]] <-"CD8 medium"
+
+dat$CD8_IDO_G[dat$IDO_CD8 >summary(dat$IDO_CD8)[5]] <-"CD8 IDO high"
+dat$CD8_IDO_G[dat$IDO_CD8 <summary(dat$IDO_CD8)[2]] <-"CD8 IDO low"
+dat$CD8_IDO_G[dat$IDO_CD8 >summary(dat$IDO_CD8)[2]& dat$IDO_CD8<summary(dat$IDO_CD8)[5]] <-"CD8 IDO medium"
+
+dat$CD8_TCF_G[dat$`TCF1/7_CD8` >summary(dat$`TCF1/7_CD8`)[5]] <-"CD8 TCF1/7 high"
+dat$CD8_TCF_G[dat$`TCF1/7_CD8` <summary(dat$`TCF1/7_CD8`)[2]] <-"CD8 TCF1/7 low"
+dat$CD8_TCF_G[dat$`TCF1/7_CD8` >summary(dat$`TCF1/7_CD8`)[2]& dat$`TCF1/7_CD8`<summary(dat$`TCF1/7_CD8`)[5]] <-"CD8 TCF1/7 medium"
+
+dat$CD8_ki67_G[dat$ki67_CD8 >summary(dat$ki67_CD8)[5]] <-"CD8 dividing high"
+dat$CD8_ki67_G[dat$ki67_CD8 <summary(dat$ki67_CD8)[2]] <-"CD8 dividing low"
+dat$CD8_ki67_G[dat$ki67_CD8 >summary(dat$ki67_CD8)[2]& dat$ki67_CD8<summary(dat$ki67_CD8)[5]] <-"CD8 dividing medium"
+
+#OS
+pw<-pairwise_survdiff(Surv(OS, censoringOS) ~ metacluster,data = dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+#   abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(OS, censoringOS) ~ dat[[i]], data=dat)  
+km_trt_fit
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = F,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("OS over",i,"per",k))
+ # facet_grid(.~surv_dat[[i]])
+
+
+#pdf(file=file.path(plot_folder, paste0("Survival_Density-cell_subtype_hi-med-low_OS over",i,"_per_",k,".pdf")))
+#print(p,newpage=FALSE)
+#dev.off()
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#km_trt_fit
+print(p)
+
+#disease free survival
+pw<-pairwise_survdiff(Surv(DFS, censoringDFS) ~ metacluster,data = dat)
+#print(pw)
+#print(symnum(pw$p.value, cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1),
+#   symbols = c("****", "***", "**", "*", "+", "."),
+#   abbr.colnames = FALSE, na = " "))
+
+km_trt_fit <- survfit(Surv(DFS, censoringDFS) ~ dat[[i]], data=dat)      
+km_trt_fit
+
+p <-ggsurvplot(km_trt_fit,
+               data=dat,
+               conf.int = T,
+               pval = T,
+               #conf.int.style = "step",
+               surv.median.line = "hv",
+               xlim=c(0,5000))+ # Specify median survival,
+               #legend.title = paste(i),
+               #legend.labs=c("Grade 1","Grade 2","Grade 3"),
+               #legend.labs=c(paste(i,sort(unique(surv_dat[[i]][!is.na(surv_dat[[i]])])))))+
+  labs(title=paste("DFS over",i,"per",k))#+
+ # facet_grid(.~surv_dat[[i]])
+print(p)
+
+#pdf(file=file.path(plot_folder, paste0("Survival_Density-cell_subtype_hi-med-low_DFS over",i,"_per_",k,".pdf")))
+#print(p,newpage=FALSE)
+#dev.off()
+
+p <-p$plot+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #facet_wrap(~strata)+
+  theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())
+#print(p)
+#km_trt_fit
+  }
+}
+```
+
+
+
+## Lasso-regressed cox-ph model   
+including clinical parameters, patient metacluster and Immune cell categories (CD4 vs CD8) classified as high mid low as well as the densities (continuous).   
+```{r,coxph Immune cell category densities high-mid-low, message=FALSE, warning=FALSE, echo=FALSE, out.width="50%", fig.width=6, fig.height=6}
+surv_dat$metacluster <-as.numeric(surv_dat$metacluster)
+fd_test <- fastDummies::dummy_cols(surv_dat, select_columns = c(paste(surv),"Typ","Grade","T.new","N","M.new","Stage","Smok","Gender", "metacluster")) #
+
+fd_test<-fd_test[!fd_test$OS == 0, ]
+time <- fd_test$OS
+status <- fd_test$censoringOS
+
+rownames(fd_test) <- fd_test$Patient_ID
+
+fd_test <-fd_test %>%select(-c(paste(surv),"metacluster",colnames(clinical.data),contains("censor")))
+
+fd_test[is.na(fd_test)] <- 0
+fd_test_matrix <-data.matrix(fd_test)
+
+
+#determine lambda
+cv.fit <- cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+fit <- glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+#plot(cv.fit)
+#cv.fit$lambda.min
+
+#loop to determine optimal lambda for lasso regression
+MSEs <- NULL
+for (i in 1:100){
+                 cv <-  cv.glmnet(fd_test_matrix, Surv(time, status), family = "cox", maxit = 1000)
+                 MSEs <- cbind(MSEs, cv$cvm)
+             }
+  rownames(MSEs) <- cv$lambda
+  lambda.min <- as.numeric(names(which.min(rowMeans(MSEs))))
+
+#coef(fit, s = lambda.min)
+Coefficients <- coef(fit, s = lambda.min)
+Active.Index <- which(Coefficients != 0)
+Active.Coefficients <- Coefficients[Active.Index]
+#Coefficients
+
+active_coefficients <- Coefficients[,1] != 0
+x <- fd_test_matrix[,active_coefficients]
+x <- data.frame(x)
+
+vct <-colnames(x)
+coxdf<-coxph(Surv(time,status)~.,data=x)
+
+td_res = tidy(coxdf, exponentiate = TRUE)
+td_res = td_res %>% arrange(estimate) %>% mutate(term = factor(term,levels = term))
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.high = estimate + std.error)
+
+td_res<-td_res %>%
+  rowwise() %>%
+  dplyr::mutate(conf.low = estimate - std.error)
+td_res<-td_res[!td_res$std.error == 0, ]
+na_td_res <- td_res[-grep("NA",td_res$term),]
+
+
+p <-ggplot(na_td_res, aes(x = term, y = estimate,color =p.value < 0.05)) +
+geom_point(size = 4) +
+geom_errorbar(aes(ymax = conf.high, ymin = conf.low))+
+scale_colour_viridis_d("p value < 0.05")+
+coord_flip()+
+geom_hline(yintercept = 1,color = 'black')+
+theme_bw()+
+scale_colour_tableau()
+p
+#ggsave(file=file.path(plot_folder, paste("CoxPH_Tcell-Category_Density_high-mid-low_Lasso.pdf")), width=10, height=10, plot=p)
+
+ggforest(coxdf, data =  (fd_test %>% select(-contains("NA"))))
+
+#pdf(file=file.path(plot_folder,paste("COX_selectedFactors_glmnet.pdf")))
+#ggforest(coxdf, data = fd_test)
+#dev.off()
+```
+
+## Kruskal Wallis / Wilcoxon comparison between groups of clincial variables without neoadjuvant treated patients.
+```{r, KW W Immune cell category density WO neo,warning=FALSE, message=FALSE, echo=FALSE, fig.width=12, fig.height=10}
+#define variables to be tested here
+categories <- c( "Dist.Met", "T.new","M.new","N","Relapse","DX.name","Stage","Grade","Gender")
+
+immune.sce_pat.roi$NeoAdj <- ifelse(immune.sce_pat.roi$Chemo==1 |immune.sce_pat.roi$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+tdat <-as.data.frame(table(immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=immune.sce_pat.roi$RoiID,
+                                "Area"=immune.sce_pat.roi$Area_px_Core,
+                                "Patient_ID"=immune.sce_pat.roi$Patient_ID,
+                                "DX.name"=immune.sce_pat.roi$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Sample) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+  tdat <-tdat %>% 
+  group_by(Patient_ID,Phenotype) %>%
+  summarise(across(-c(RoiID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+
+tdat_wide$total_density <- rowSums(tdat_wide[,2:14])
+tdat <-tdat_wide %>% pivot_longer(cols=c(colnames(tdat_wide[,2:15])), names_to = "Phenotype",values_to = "density")
+
+#remove
+tdat <-tdat[!tdat$Patient_ID%in% neoadj_pat$Patient_ID,]
+
+tdat_c <-merge(tdat, clinical.data, by="Patient_ID")
+categories <- c("Dist.Met", "T.new","M.new","N","Relapse","DX.name","Stage","Grade","Gender")
+plot_list <- list()
+for (i in (categories)) {
+  for (j in unique(tdat_c$Phenotype)){
+    tdat<-tdat_c
+    tdat[[i]] <-as.factor(tdat[[i]])
+    tdat <-tdat %>% drop_na(i)
+    tdat$i <-as.factor(tdat[[i]])
+    tdat$Phenotype <-as.factor(tdat$Phenotype)
+    tdat$Phenotype <-droplevels(tdat$Phenotype)
+
+    tdat <-subset(tdat, Phenotype==j)
+
+    if (length(unique(tdat[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- tdat%>%
+     group_by(Phenotype) %>%
+     dunn_test(density~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(tdat, aes(x= .data[[i]], y = density, colour=.data[[i]]))+
+              geom_violin(width=0.5) +
+    geom_boxplot(width=0.3, color="grey", alpha=0.2)+
+      #geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=3, strip.position="top")+
+      scale_color_viridis_d()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Mean patient density")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+     else{
+      
+        tdat<-tdat_c
+        tdat[[i]] <-as.factor(tdat[[i]])
+        tdat <-tdat %>% drop_na(i)
+        tdat$Phenotype <-factor(tdat$Phenotype)
+        tdat$Phenotype <-droplevels(tdat$Phenotype)
+        tdat <-tdat %>% drop_na(i)
+
+        tdat <-subset(tdat, Phenotype==j)
+          detach("package:dplyr", unload=TRUE)
+          library(dplyr)
+      pvalues <- tdat %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(tdat$density~tdat[[i]], paired=F)$p.value)
+      tdat <- merge(tdat, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      tdat$p.wt <- paste0('p=',round(tdat$p, digits=3))
+    
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(tdat, aes(x= .data[[i]], y = density, colour=.data[[i]]))+
+        geom_violin(width=0.5) +
+        geom_boxplot(width=0.3, color="grey", alpha=0.2)+
+        #geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=3, strip.position="top")+
+        #ggtitle("paired")+
+        theme(axis.title.x=element_text("Phenotype"))+
+      
+        scale_color_viridis_d()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(y="Mean patient density", fill="Area_Phenotype")+
+        theme(axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=7) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+ # pdf(file=file.path(plot_folder, paste0("KW_W_Tcell-Category_Densities_WOneo",i,".pdf")), width=12, height=6)
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=3)
+#  dev.off()
+}
+```
+
+## Kruskal Wallis / Wilcoxon comparison between groups of clincial variables with neoadjuvant treated patients.
+```{r, KW Wilcox Immune cell Category density W neo,warning=FALSE, message=FALSE, echo=FALSE, fig.width=12, fig.height=10}
+#define variables to be tested here
+categories <- c( "Dist.Met", "T.new","M.new","N","Relapse","DX.name","Stage","Grade","Gender")
+
+immune.sce_pat.roi$NeoAdj <- ifelse(immune.sce_pat.roi$Chemo==1 |immune.sce_pat.roi$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+tdat <-as.data.frame(table(immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=immune.sce_pat.roi$RoiID,
+                                "Area"=immune.sce_pat.roi$Area_px_Core,
+                                "Patient_ID"=immune.sce_pat.roi$Patient_ID,
+                                "DX.name"=immune.sce_pat.roi$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Sample) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+  tdat <-tdat %>% 
+  group_by(Patient_ID,Phenotype) %>%
+  summarise(across(-c(RoiID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+
+tdat_wide$total_density <- rowSums(tdat_wide[,2:14])
+tdat <-tdat_wide %>% pivot_longer(cols=c(colnames(tdat_wide[,2:15])), names_to = "Phenotype",values_to = "density")
+
+tdat_c <-merge(tdat, clinical.data, by="Patient_ID")
+categories <- c("Dist.Met", "T.new","M.new","N","Relapse","DX.name","Stage","Grade","Gender","Chemo","Radio","NeoAdj")
+plot_list <- list()
+for (i in (categories)) {
+  for (j in unique(tdat_c$Phenotype)){
+    tdat<-tdat_c
+    tdat[[i]] <-as.factor(tdat[[i]])
+    tdat <-tdat %>% drop_na(i)
+    tdat$i <-as.factor(tdat[[i]])
+    tdat$Phenotype <-as.factor(tdat$Phenotype)
+    tdat$Phenotype <-droplevels(tdat$Phenotype)
+
+    tdat <-subset(tdat, Phenotype==j)
+
+    if (length(unique(tdat[[i]])) > 2)
+      {
+    #calculate p values, add position for plot
+    stat.test <- tdat%>%
+     group_by(Phenotype) %>%
+     dunn_test(density~i,p.adjust.method = "bonferroni")
+    stat.test<-stat.test %>% select(-.y., -statistic)
+    stat.test <- stat.test %>% add_xy_position(x = i)
+   
+    #create plot list
+    plot_list[[j]]<-
+      ggplot(tdat, aes(x= .data[[i]], y = density, colour=.data[[i]]))+
+              geom_violin(width=0.5) +
+    geom_boxplot(width=0.3, color="grey", alpha=0.2)+
+      #geom_boxplot()+
+      geom_point()+
+      facet_wrap(~Phenotype, scales="free", ncol=3, strip.position="top")+
+      scale_color_viridis_d()+
+      theme_bw()+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+      labs( y="Mean patient density")+
+      theme(axis.text.x = element_text(angle=45, hjust=1), axis.ticks.x = element_blank())+
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0, hide.ns = T)+
+      theme(legend.position = "none")
+    }
+    
+     else{
+      
+        tdat<-tdat_c
+        tdat[[i]] <-as.factor(tdat[[i]])
+        tdat <-tdat %>% drop_na(i)
+        tdat$Phenotype <-factor(tdat$Phenotype)
+        tdat$Phenotype <-droplevels(tdat$Phenotype)
+        tdat <-tdat %>% drop_na(i)
+
+        tdat <-subset(tdat, Phenotype==j)
+          detach("package:dplyr", unload=TRUE)
+          library(dplyr)
+      pvalues <- tdat %>% 
+      group_by(Phenotype) %>% 
+      summarise(p=wilcox.test(tdat$density~tdat[[i]], paired=F)$p.value)
+      tdat <- merge(tdat, pvalues, by.x = "Phenotype", by.y ="Phenotype", all.x = TRUE)
+      tdat$p.wt <- paste0('p=',round(tdat$p, digits=3))
+    
+      #Plot list, all js together over i
+      plot_list[[j]]<-
+        ggplot(tdat, aes(x= .data[[i]], y = density, colour=.data[[i]]))+
+        geom_violin(width=0.5) +
+        geom_boxplot(width=0.3, color="grey", alpha=0.2)+
+        #geom_boxplot()+
+        geom_point()+
+        facet_wrap(~Phenotype+p.wt, scales="free", ncol=3, strip.position="top")+
+        #ggtitle("paired")+
+        theme(axis.title.x=element_text("Phenotype"))+
+      
+        scale_color_viridis_d()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+        labs(y="Mean patient density", fill="Area_Phenotype")+
+        theme(axis.ticks.x = element_blank(),
+              legend.position = "none")
+    }  
+ 
+    }
+
+  #plot
+  gridExtra::grid.arrange(grobs = plot_list, ncol=7) #, ncol=round(length(unique(t$Phenotype)))
+  
+  #save out in individual pdfs for each variable
+#  pdf(file=file.path(plot_folder, paste0("KW_W_Tcell-Category_Densities_Wneo",i,".pdf")), width=12, height=6)
+ # gridExtra::grid.arrange(grobs = plot_list, ncol=3)
+#  dev.off()
+}
+```
+
+```{r, Correlation Immune cell category densities with clinical parameters, eval=F, echo=T, message=FALSE, warning=FALSE, echo=FALSE, eval=F}
+immune.sce_pat.roi$NeoAdj <- ifelse(immune.sce_pat.roi$Chemo==1 |immune.sce_pat.roi$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+immune.sce_pat.roi$NeoAdj <- ifelse(immune.sce_pat.roi$Chemo==1 |immune.sce_pat.roi$Radio==1,"NeoAdjuvantTherapy","NoNeoAdjuvantTherapy")
+tdat <-as.data.frame(table(immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$RoiID,
+                           immune.sce_pat.roi[,immune.sce_pat.roi$Patient_ID!="Control"&
+                                          immune.sce_pat.roi$DX.name=="Adenocarcinoma"|
+                                          immune.sce_pat.roi$DX.name=="Squamous cell carcinoma"]$cell_subtype))
+colnames(tdat)<-c("RoiID","Phenotype","n")
+
+da <-dplyr::distinct(data.frame("RoiID"=immune.sce_pat.roi$RoiID,
+                                "Area"=immune.sce_pat.roi$Area_px_Core,
+                                "Patient_ID"=immune.sce_pat.roi$Patient_ID,
+                                "DX.name"=immune.sce_pat.roi$DX.name))
+
+  tdat <-merge(tdat,da,by="RoiID")
+  tdat <-tdat[tdat$DX.name=="Adenocarcinoma" | tdat$DX.name=="Squamous cell carcinoma",]
+  tdat <-tdat %>%
+    #dplyr::count(Type, Area,Sample) %>%
+    dplyr::group_by(RoiID) %>%
+    dplyr::mutate(density = n / Area*1000000)
+  range(tdat$density)
+
+  tdat <-tdat %>% 
+  group_by(Patient_ID,Phenotype) %>%
+  summarise(across(-c(RoiID,n,Area,DX.name), sum, na.rm = TRUE))
+  range(tdat$density)
+
+tdat_wide <- pivot_wider(tdat,id_cols=c("Patient_ID"),names_from = "Phenotype", values_from ="density",names_prefix = "")
+
+tdat_wide$total_density <- rowSums(tdat_wide[,2:5])
+
+tdat_wide <-merge(tdat_wide, clinical.data, by="Patient_ID")
+tdat_wide_as <-tdat_wide[tdat_wide$DX.name=="Adenocarcinoma" | tdat_wide$DX.name=="Squamous cell carcinoma",]
+tdat_wide_as$LN.Met <-ifelse(tdat_wide_as$LN.Met=="LN Metastases", 1,0)
+tdat_wide_as$Dist.Met <-ifelse(tdat_wide_as$Dist.Met=="Dist. Metastases", 1,0)
+
+for(i in c.param){
+  print(i)
+  print(cor.test(tdat_wide_as$Neutrophil,tdat_wide_as[[i]], method="spearman", exact=F))
+  print(cor.test(tdat_wide_as$Bcell,tdat_wide_as[[i]], method="spearman", exact=F))
+  print(cor.test(tdat_wide_as$Tcell,tdat_wide_as[[i]], method="spearman", exact=F))
+  print(cor.test(tdat_wide_as$Myeloid,tdat_wide_as[[i]], method="spearman", exact=F))
+  print(cor.test(tdat_wide_as$total_density,tdat_wide_as[[i]], method="spearman", exact=F))
+}
+```
+

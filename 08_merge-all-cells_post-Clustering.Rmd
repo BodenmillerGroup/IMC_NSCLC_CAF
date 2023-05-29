@@ -1,0 +1,369 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, import libraries}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(stringr)
+library(DT)
+
+library(dplyr)
+library(tidyr)
+library(mclust)
+library(ggplot2)
+library(RColorBrewer)
+library(scater)
+library(Rphenoannoy)
+set.seed(101100)
+```
+
+```{r}
+final.fibro <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL_Fibros.rds")
+final.fibro.other <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/all_fibros_workingfile_OTHER.rds")
+final.fibro.HEV <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/all_fibros_workingfile_HEV.rds")
+
+final.vessel <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/vessel-VESSEL.rds")
+final.vessel.tumour <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/all_vessel_workingfile_TUMOUR.rds")
+
+final.stroma.tumour <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/all_stroma_workingfile_TUMOUR.rds")
+
+final.immune.tumour <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/all_immune_workingfile_TUMOUR.rds")
+final.immune.nonTcell <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/NonTcell_immune_afterStroma_Tcell-merge_workingfile.rds")
+final.immune.Tcell <- readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL_Tcells-minusImmune_workingfile.rds")
+
+
+final.tumour.tumour <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/merge_all-tumour_TUMOUR.rds")
+
+final.nontumour.undefined <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/merge_all-NONtumour_final_workingfile_UNDEFINED.rds")
+final.nontumour.tumour <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/merge_all-NONtumour_final_workingfile_TUMOUR.rds")
+
+```
+
+```{r}
+#final.fibro
+colData(final.fibro) %>% colnames()
+final.fibro$cell_category <- "Fibroblast"
+final.fibro$cell_type <- final.fibro$CAFtype
+final.fibro$cell_subtype <- final.fibro$CAFsubtype
+
+cur_DF <- colData(final.fibro)%>% data.frame() %>% select(-contains(c("som_","rp_","CAF"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.fibro$ImageNumber, final.fibro$CellNumber))
+
+colData(final.fibro) <- cur_DF
+
+#final.fibro.other
+colData(final.fibro.other) %>% colnames()
+final.fibro.other$cell_category <- "Other"
+final.fibro.other$cell_type <- "Other"
+final.fibro.other$cell_subtype <- "Other"
+
+cur_DF <- colData(final.fibro.other)%>% data.frame() %>% select(-contains(c("som_","rp_","CAF"))) %>% DataFrame()
+
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.fibro.other$ImageNumber, final.fibro.other$CellNumber))
+
+colData(final.fibro.other) <- cur_DF
+
+#final.fibro.HEV
+colData(final.fibro.HEV) %>% colnames()
+final.fibro.HEV$cell_category <- "vessel"
+final.fibro.HEV$cell_type <- "HEV"
+final.fibro.HEV$cell_subtype <- "HEV"
+
+cur_DF <- colData(final.fibro.HEV)%>% data.frame() %>% select(-contains(c("som_","rp_","CAF"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.fibro.HEV$ImageNumber, final.fibro.HEV$CellNumber))
+
+colData(final.fibro.HEV) <- cur_DF
+
+#final.vessel
+colData(final.vessel) %>% colnames()
+final.vessel$cell_category <- "vessel"
+final.vessel$cell_type <- "vessel"
+final.vessel$cell_subtype <- "vessel"
+
+cur_DF <- colData(final.vessel)%>% data.frame() %>% select(-contains(c("som_","rp_","vessel","tumour"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.vessel$ImageNumber, final.vessel$CellNumber))
+
+colData(final.vessel) <- cur_DF
+
+
+#final.vessel.tumour.tumour
+colData(final.vessel.tumour) %>% colnames()
+final.vessel.tumour$cell_category <- "Tumour"
+final.vessel.tumour$cell_type <- "Tumour"
+final.vessel.tumour$cell_subtype <- "Tumour"
+
+cur_DF <- colData(final.vessel.tumour)%>% data.frame() %>% select(-contains(c("som_","rp_","vessel","tumour"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.vessel.tumour$ImageNumber, final.vessel.tumour$CellNumber))
+
+colData(final.vessel.tumour) <- cur_DF
+
+
+#final.stroma.tumour.tumour
+colData(final.stroma.tumour) %>% colnames()
+final.stroma.tumour$cell_category <- "Tumour"
+final.stroma.tumour$cell_type <- "Tumour"
+final.stroma.tumour$cell_subtype <- "Tumour"
+
+cur_DF <- colData(final.stroma.tumour)%>% data.frame() %>% select(-contains(c("som_","rp_","vessel","tumour"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.stroma.tumour$ImageNumber, final.stroma.tumour$CellNumber))
+
+colData(final.stroma.tumour) <- cur_DF
+
+#final.immune.tumour.tumour
+colData(final.immune.tumour) %>% colnames()
+final.immune.tumour$cell_category <- "Tumour"
+final.immune.tumour$cell_type <- "Tumour"
+final.immune.tumour$cell_subtype <- "Tumour"
+
+cur_DF <- colData(final.immune.tumour)%>% data.frame() %>% select(-contains(c("som_","rp_","vessel","tumour"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.immune.tumour$ImageNumber, final.immune.tumour$CellNumber))
+
+colData(final.immune.tumour) <- cur_DF
+
+
+#final.immune.nonTcell.tumour
+colData(final.immune.nonTcell) %>% colnames()
+final.immune.nonTcell$cell_category <- "Immune"
+final.immune.nonTcell$cell_type <- final.immune.nonTcell$immune_category
+final.immune.nonTcell$cell_subtype <- final.immune.nonTcell$immune_category
+
+cur_DF <- colData(final.immune.nonTcell)%>% data.frame() %>% select(-contains(c("som_","rp_","vessel","tumour","immune"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.immune.nonTcell$ImageNumber, final.immune.nonTcell$CellNumber))
+
+colData(final.immune.nonTcell) <- cur_DF
+
+#final.immune.Tcell
+colData(final.immune.Tcell) %>% colnames()
+final.immune.Tcell$cell_category <- "T cell"
+final.immune.Tcell$cell_type <- final.immune.Tcell$TcellCategory
+final.immune.Tcell$cell_subtype <-  final.immune.Tcell$TcellType
+
+cur_DF <- colData(final.immune.Tcell)%>% data.frame() %>% select(-contains(c("som_","rp_","immune","tumour","Tcell"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.immune.Tcell$ImageNumber, final.immune.Tcell$CellNumber))
+
+colData(final.immune.Tcell) <- cur_DF
+
+#final.tumour.tumour
+colData(final.tumour.tumour) %>% colnames()
+final.tumour.tumour$cell_category <- "Tumour"
+final.tumour.tumour$cell_type <- "Tumour"
+final.tumour.tumour$cell_subtype <-  "Tumour"
+
+cur_DF <- colData(final.tumour.tumour)%>% data.frame() %>% select(-contains(c("som_","rp_","immune","tumour","Tcell"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.tumour.tumour$ImageNumber, final.tumour.tumour$CellNumber))
+
+colData(final.tumour.tumour) <- cur_DF
+
+#final.nontumour.tumour
+colData(final.nontumour.tumour) %>% colnames()
+final.nontumour.tumour$cell_category <- "Tumour"
+final.nontumour.tumour$cell_type <- "Tumour"
+final.nontumour.tumour$cell_subtype <-  "Tumour"
+
+cur_DF <- colData(final.nontumour.tumour)%>% data.frame() %>% select(-contains(c("som_","rp_","immune","tumour","Tcell"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.nontumour.tumour$ImageNumber, final.nontumour.tumour$CellNumber))
+
+colData(final.nontumour.tumour) <- cur_DF
+
+#final.nontumour.undefined
+colData(final.nontumour.undefined) %>% colnames()
+final.nontumour.undefined$cell_category <- "Other"
+final.nontumour.undefined$cell_type <- "Other"
+final.nontumour.undefined$cell_subtype <-  "Other"
+
+cur_DF <- colData(final.nontumour.undefined)%>% data.frame() %>% select(-contains(c("som_","rp_","immune","tumour","Tcell"))) %>% DataFrame()
+colnames(cur_DF)
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(final.nontumour.undefined$ImageNumber, final.nontumour.undefined$CellNumber))
+
+colData(final.nontumour.undefined) <- cur_DF
+
+```
+
+```{r}
+
+final.fibro %>%colData() %>%colnames() %>%length()
+assay(final.fibro, "exprs") <-NULL
+
+final.fibro.other %>%colData() %>%colnames()%>%length()
+assay(final.fibro.other, "exprs") <-NULL
+
+final.fibro.HEV  %>%colData() %>%colnames()%>%length()
+assay(final.fibro.HEV, "exprs") <-NULL
+
+final.vessel  %>%colData() %>%colnames()%>%length()
+assay(final.vessel, "exprs") <-NULL
+
+final.vessel.tumour %>%colData() %>%colnames()%>%length()
+assay(final.vessel.tumour, "exprs") <-NULL
+
+final.stroma.tumour %>%colData() %>%colnames()%>%length()
+assay(final.stroma.tumour, "exprs") <-NULL
+
+final.immune.tumour  %>%colData() %>%colnames()%>%length()
+assay(final.immune.tumour, "exprs") <-NULL
+
+final.immune.nonTcell  %>%colData() %>%colnames()%>%length()
+assay(final.immune.nonTcell, "exprs") <-NULL
+
+final.immune.Tcell %>%colData() %>%colnames()%>%length()
+assay(final.immune.Tcell, "exprs") <-NULL
+
+
+final.tumour.tumour %>%colData() %>%colnames()%>%length()
+assay(final.tumour.tumour, "exprs") <-NULL
+
+final.nontumour.undefined  %>%colData() %>%colnames()%>%length()
+assay(final.nontumour.undefined, "exprs") <-NULL
+
+final.nontumour.tumour  %>%colData() %>%colnames()%>%length()
+assay(final.nontumour.tumour, "exprs") <-NULL
+
+all.cells <- cbind(final.fibro,final.fibro.other,final.fibro.HEV,final.vessel,final.vessel.tumour,final.stroma.tumour,final.immune.tumour,final.immune.nonTcell,final.immune.Tcell,final.tumour.tumour,final.nontumour.undefined,final.nontumour.tumour)
+
+saveRDS(all.cells,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/all_cells_combined_types.rds")
+
+
+all.cells$cell_category[all.cells$cell_type=="other"] <-"Other"
+all.cells$cell_type[all.cells$cell_type=="other"] <-"Other"
+
+table(all.cells$cell_category)
+rm(final.fibro,final.fibro.other,final.fibro.HEV,final.vessel,final.vessel.tumour,final.stroma.tumour,final.immune.tumour,final.immune.nonTcell,final.immune.Tcell,final.tumour.tumour,final.nontumour.undefined,final.nontumour.tumour)
+```
+
+
+#add clinical data
+```{r}
+wd <-dirname(getwd())
+
+clinical.data <- read.csv(file=file.path(wd,"sce_objects","clinical_data", "clinical_data_ROI_ac_combined_CORRECT.csv"))
+clinical.data$TMA <-clinical.data$TMA.x
+clinical.data$TMA.x <-NULL
+clinical.data$TMA.y <-NULL
+clinical.data$X.1 <-NULL
+clinical.data$X <-NULL
+head(clinical.data)
+
+unique(clinical.data$DX.name)
+clinical.data$DX.name[clinical.data$Patient_ID=="Control"] <-"Control"
+table(clinical.data$DX.name)
+clinical.data$Patient_ID %>% unique() %>% length() #1071 PATIENTS IN TOTAL
+
+area <- read.csv(file=file.path(wd,"clinical_data", "area.csv"))
+area$X <- NULL
+area$Tma_ac <- area$TMA_ImageID
+area$TMA_ImageID <-NULL
+
+area_clinical <- left_join(clinical.data, area, by="Tma_ac")
+length(unique(area$Tma_ac))
+length(unique(clinical.data$Tma_ac))
+
+length(unique(area_clinical$Tma_ac))
+length(unique(area_clinical$Patient_ID))
+length(unique(clinical.data$Patient_ID))
+head(area_clinical)
+
+colnames(area_clinical)[colnames(area_clinical) %in% colnames(colData(all.cells))]
+
+area_clinical$Patient_ID[!area_clinical$Patient_ID %in% unique(all.cells$Patient_ID)]
+unique(all.cells$Patient_ID)[!unique(all.cells$Patient_ID) %in% area_clinical$Patient_ID]
+
+all.cells[, is.na(all.cells$Patient_ID)]$Tma_ac %>% unique()
+
+saveRDS(all.cells,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/all_cells_combined_types_CLINICAL-DATA.rds")
+
+all.cells.filtered <- all.cells[, all.cells$Tma_ac!="88A_1"&all.cells$Tma_ac!="88A_2"&all.cells$Tma_ac!="88A_3"&all.cells$Tma_ac!="88A_4"&all.cells$Tma_ac!="86B_24"]
+
+all.filtered <-all.cells[, all.cells$Tma_ac!="88A_1"&all.cells$Tma_ac!="88A_2"&all.cells$Tma_ac!="88A_3"&all.cells$Tma_ac!="88A_4"&all.cells$Tma_ac!="86B_24"]
+
+all.cells[, all.cells$Tma_ac=="88A_1"|
+            all.cells$Tma_ac=="88A_2"|
+            all.cells$Tma_ac=="88A_3"|
+            all.cells$Tma_ac=="88A_4"|
+            all.cells$Tma_ac=="86B_24"]
+
+saveRDS(all.filtered,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/all_cells_combined_types_CLINICAL-DATA_FILTERED.rds")
+
+```
+
+
+
+```{r, add clustering results to subset tumour}
+cur_DF <- as_tibble(colData(all.cells)) %>% left_join(area_clinical, by = c("Tma_ac","TMA","acID")) %>% DataFrame()
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(all.cells$ImageNumber, all.cells$CellNumber))
+
+colData(all.cells) <- cur_DF
+rownames(colData(all.cells)) <-all.cells$CellID
+
+unique(all.cells$DX.name)
+head(colData(all.cells))
+all.cells$Patient_ID %>% unique() %>% length()
+length(unique(all.filtered[,all.filtered$Patient_ID!="Control" ]$Patient_ID))
+#1056 patients in total!
+
+length(unique(clinical.data$Patient_ID))
+length(unique(all.cells$Patient_ID))
+length(unique(all.filtered$Patient_ID))
+
+
+length(unique(clinical.data$Patient_ID))
+tcell.sce$DX.name[is.na(tcell.sce$DX.name)]<-"NA"
+
+
+table(all.filtered$cell_category)
+```
+```{r}
+all.fibro <- all.filtered[, all.filtered$cell_category=="Fibroblast"]
+all.vessel <- all.filtered[, all.filtered$cell_category=="vessel"]
+all.tumour <- all.filtered[, all.filtered$cell_category=="Tumour"]
+all.immune <- all.filtered[, all.filtered$cell_category=="Immune"|all.filtered$cell_category=="T cell"]
+all.tcell<- all.filtered[, all.filtered$cell_category=="T cell"]
+all.immune.nonT <- all.filtered[, all.filtered$cell_category=="Immune"]
+all.other <- all.filtered[, all.filtered$cell_category=="Other"]
+
+unique(all.filtered$cell_category)
+
+table(all.filtered$cell_category)
+
+
+
+saveRDS(all.fibro,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/FIBRO_CLINICAL-DATA_FILTERED.rds")
+
+saveRDS(all.vessel,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/VESSEL_CLINICAL-DATA_FILTERED.rds")
+
+saveRDS(all.tumour,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/TUMOUR_CLINICAL-DATA_FILTERED.rds")
+
+saveRDS(all.other,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/OTHER_CLINICAL-DATA_FILTERED.rds")
+
+saveRDS(all.immune,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/IMMUNE_CLINICAL-DATA_FILTERED.rds")
+
+
+saveRDS(all.immune.nonT,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/IMMUNE_nonT_CLINICAL-DATA_FILTERED.rds")
+
+saveRDS(all.tcell,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/TCELL-only_CLINICAL-DATA_FILTERED.rds")
+
+saveRDS(all.filtered,"~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/all_cells_combined_types_CLINICAL-DATA_FILTERED.rds")
+
+all.filtered <-readRDS("~/data/lena_processed2/NSCLC_NEW/sce_objects/final objects with categories/FINAL/all_cells_combined_types_CLINICAL-DATA_FILTERED.rds")
+length(unique(all.filtered$Patient_ID))
+```
+```{r}
+df <- colData(all.filtered)%>% data.frame() %>% select(c(CellID, cell_category, Compartment))
+
+df$Mask <- ifelse(df$Compartment>0, "Tumour","Stroma")
+i <-"Tumour"
+  table(df$cell_category, df$Mask)
+
+```

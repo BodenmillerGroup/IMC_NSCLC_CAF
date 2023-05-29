@@ -1,0 +1,277 @@
+---
+title: "Read in CP data, NSCLC TMA 88_B"
+author: "Lena Cords"
+output: html_notebook
+---
+
+```{r, import libraries}
+library(igraph)
+library(SingleCellExperiment)
+library(S4Vectors)
+library(stringr)
+library(DT)
+```
+
+
+
+
+```{r, Set wd}
+#set working directory 
+wd <- dirname(dirname(dirname(getwd())))
+wd <-"/mnt"
+data_folder <- file.path(wd,"lena_processed","NSCLC_TMA","ImcSegmentationPipeline","analysis","LC_NSCLC_TMA_88_B",'cpinp')
+panel_folder <- file.path(wd,"lena_processed","NSCLC_TMA","ImcSegmentationPipeline","analysis","LC_NSCLC_TMA_88_B",'cpout')
+
+results_folder <-(file.path(wd,"lena_processed2","NSCLC_NEW","sce_objects","RAW"))
+```
+
+
+```{r, Data import}
+#Read in: Cells, Image, Object and Panel
+cells <- read.csv(file=file.path(data_folder,paste('Cells.csv')))
+image <- read.csv(file=file.path(data_folder, paste("Image.csv")))
+object_relationship <- read.csv(file=file.path(data_folder, paste("distance20_Object relationships.csv")))
+panel <- read.csv(file=file.path(panel_folder, paste('panel.csv')))
+```
+
+```{r, What has been measured for each cell}
+#number of cells
+nrow(cells)
+unique(sub("_c[0-9]*$", "", colnames(cells)))
+
+#Select only the measurements you want to work on, based on the measurements displayed above Intensity_MeanIntensityCellsCorr_ColdStack
+counts <- cells[, grepl("Intensity_MeanIntensityCorrected_FullStackFiltered", colnames(cells))]
+```
+
+```{r Scale counts according to CP scaling factor}
+#when using 16bit data this should be 2^16 =65536
+scaling_factor <- unique(image$Scaling_FullStack)
+#Scale up the counts according to scaling factor from CellProfiler
+counts <- counts * scaling_factor
+
+#make sure the counts have actually been multiplied by the scaling factor
+range(counts)
+```
+
+
+```{r Add cell metadata as S4 Object for the SCE}
+#the S4Vector is needed for the SCE and a dataframe that stores the metadata per category
+cell_meta <- DataFrame(CellNumber = cells$ObjectNumber,
+                      Center_X=cells$Location_Center_X,
+                      Center_Y=cells$Location_Center_Y,
+                      Area = cells$AreaShape_Area,
+                      MajorAxisLength=cells$AreaShape_MajorAxisLength,
+                      MinorAxisLength=cells$AreaShape_MinorAxisLength,
+                      Compartment=cells$Intensity_MeanIntensity_TumourMask_Distance_B100)
+cell_meta$ImageNumber <- cells$ImageNumber
+
+#Create DataFrame for image meta data. Then match image and cell metadata by ImageNumber
+
+image_meta <- DataFrame(Area_Description = image$Metadata_description)
+
+
+#run this to get the image number for the meta data
+image_meta$ImageNumber <- image$ImageNumber
+
+
+#merge cell meta and image metadata by Image Number here
+  #cell_meta <- merge(cell_meta, image_meta, by="ImageNumber")
+cell_meta <- merge(cell_meta, image_meta, by="ImageNumber")
+```
+
+
+```{r, Add cell metadata as S4 Object for the SCE from file name}
+#get info such as Batch, sample, ROI from original .mcd filename and add it to the cell metadata (colDat)
+
+#this is a good overview to get the different parts of metadata from the file name
+ac_info <- str_split(image$FileName_FullStack, '_', simplify=TRUE)
+image$Metadata_Description
+head(ac_info)
+cell_meta$BatchID <- ac_info[cell_meta$ImageNumber,1]
+cell_meta$Panel <- ac_info[cell_meta$ImageNumber,3]
+cell_meta$TmaID <- ac_info[cell_meta$ImageNumber,5]
+cell_meta$TmaBlock <- ac_info[cell_meta$ImageNumber,6]
+#cell_meta$ROI <- image$Metadata_roiid[cell_meta$ImageNumber]
+cell_meta$acID <- image$Metadata_acid[cell_meta$ImageNumber]
+#colnames(cells)
+```
+
+
+
+
+```{r Set rownames for SCE}
+#Should usually be cell id. However, in the cells.csv file the object number is counted per imgage, so to get unique cell IDs, they must be establishes by combining ObjectNumber, ImageNumber/ROINumber and SampleID
+
+rownames(cell_meta) <-paste(cell_meta$TmaID,cell_meta$TmaBlock, cell_meta$acID, cell_meta$CellNumber, sep='_')
+```
+
+
+```{r, Match channel names with metal names in exact order}
+library(DT)
+#loads panel
+DT::datatable(panel)
+
+#exactl order of channels can be extracted from the _full.csv files
+#header = FALSE is important here as otherwise it'll take the first metal as a header
+channel_metal <- read.csv(file.path(data_folder, paste("full_channelmeta.csv")), header=FALSE)
+
+#this reorders the panel according to the correct metal lsit
+panel <- panel[match(channel_metal[,1], panel$Metal.Tag),]
+#panel <- as.data.table(panel)
+#use Target from panel as the correct channel name to be displayed
+rownames(panel) <-panel$Clean_Target
+
+#channels in cell file are not ordered correctly (starting with 1,11,12 ... 2,21,22 ... 3,31,32...), hence we need to reorder them
+channelNumber <- as.numeric(sub("^.*_c", "", colnames(counts)))
+
+# Order counts based on channel number
+counts <- counts[,order(channelNumber, decreasing = FALSE)] 
+range(counts)
+```
+
+```{r build igraph object}
+library(igraph)
+# Construct neighbour data.frame
+# First in the ImageNumber_ObjectNumber format
+cur_df <- data.frame(CellID_1 = paste0(object_relationship$First.Image.Number, 
+                                       "_", object_relationship$First.Object.Number),
+                     CellID_2 = paste0(object_relationship$Second.Image.Number, 
+                                       "_", object_relationship$Second.Object.Number))
+# Create simple cell IDs
+cellID <- paste0(cell_meta$ImageNumber, "_", cell_meta$CellNumber)
+
+# Change cell IDs
+cur_df$CellID_1 <- rownames(cell_meta)[match(cur_df$CellID_1, cellID)]
+cur_df$CellID_2 <- rownames(cell_meta)[match(cur_df$CellID_2, cellID)]
+
+# Build graph
+g <- graph_from_data_frame(cur_df)
+g
+```
+
+
+```{r Create SingleCellExperiment}
+library(SingleCellExperiment)
+
+sce_88_B <-SingleCellExperiment(assays = list(counts=t(counts)))
+
+#marker name as row name cellID as colname
+rownames(sce_88_B)<-rownames(panel)
+colnames(sce_88_B)<-rownames(cell_meta)
+
+#store metadata in colDat and everything accordingly
+
+colData(sce_88_B) <-cell_meta
+rowData(sce_88_B) <-panel
+metadata(sce_88_B)<-list(graph=g)
+
+sce_88_B$CellID <- paste(sce_88_B$TmaID,sce_88_B$TmaBlock, sce_88_B$acID, sce_88_B$CellNumber, sep='_')
+
+#save SCE object
+saveRDS(sce_88_B, file=file.path(results_folder, paste("sce_88_B_2022.rds")))
+```
+
+
+
+
+#add counts and clinical data
+
+```{r, add transformed counts}
+censor_val <-0.999
+censor_dat <- function(x, quant = 0.999){
+  q = stats::quantile(x, quant)
+  x[x>q] = q
+  return(x)
+}
+fun.censor <- function(x) censor_dat(x, censor_val)
+fun.scale <- function(x) y <- x/max(x)
+
+#censored counts
+assay(sce_88_B, "c_counts") <- t(apply(assay(sce_88_B, "counts"), 1, fun.censor))
+
+#censored counts scaled 0-1
+assay(sce_88_B, "c_counts_scaled") <- t(apply(assay(sce_88_B, "c_counts"),
+                                           1, fun.scale))
+assay(sce_88_B, "c_counts_scaled")[assay(sce_88_B, "c_counts_scaled") < 0] <- 0
+
+
+
+#censored counts asinh scaled
+cofactor <- 1
+assay(sce_88_B, "c_counts_asinh") <- asinh((assay(sce_88_B,"c_counts"))/cofactor)
+
+#censored counts_asinh_scaled
+assay(sce_88_B, "c_counts_asinh_scaled") <- t(apply(assay(sce_88_B, "c_counts_asinh"),
+                                           1, fun.scale))
+assay(sce_88_B, "c_counts_asinh_scaled")[assay(sce_88_B, "c_counts_asinh") < 0] <- 0
+
+results_folder <-(file.path(wd,"lena_processed2","NSCLC_NEW","sce_objects","counts"))
+
+saveRDS(sce_88_B,file=file.path(results_folder, paste("sce_88_B_counts_RAW",".rds",sep="")))
+```
+
+#Merge ROI xy Data into sce
+```{r, load clinical and meta data}
+wd <-"/mnt"
+data_folder <- file.path(wd,"lena_processed","NSCLC_TMA","ImcSegmentationPipeline","analysis","LC_NSCLC_TMA_88_B",'cpinp')
+cd_folder <- file.path(wd,"lena_processed2","NSCLC_NEW","clinical_data")
+
+
+ac_meta <- read.csv(file=file.path(data_folder, paste("acquisition_metadata.csv")))
+clinical.data <-read.csv(file=file.path(cd_folder, paste("clinical_data.csv")))
+clinical.data$X <-NULL
+clinical.data$TmaBlock <-NULL
+```
+
+```{r, Add Roi coordinates}
+ac_sub <- data.frame(ac_meta$description,ac_meta$id)
+colnames(ac_sub) <- c("ROI","acID")
+
+
+ac_sub$ROI[duplicated(ac_sub$ROI)]
+
+
+ac_sub <- ac_sub %>%
+            separate(ROI, 
+              into = c("TMA", "ROI_xy"), 
+              sep = "(?<=[A-Za-z])(?=[0-9])",
+              remove=F
+            )
+ac_sub$TMA <-NULL
+
+ac_sub$RoiID <- paste("88",ac_sub$ROI, sep="_")
+ac_sub$ROI <-NULL
+head(ac_sub)
+
+length(unique(ac_sub$ROI_xy))
+length(unique(ac_sub$RoiID))
+length(unique(ac_sub$acID))
+ac_sub$ROI_xy[duplicated(ac_sub$ROI_xy)]
+
+ac_sub$TMA <-"88B"
+ac_sub$Tma_ac <-paste(ac_sub$TMA, ac_sub$acID, sep="_")
+
+results_folder <-(file.path(wd,"lena_processed2","NSCLC_NEW","sce_objects","clinical_data"))
+write.csv(ac_sub, file=file.path(results_folder, "ac_sub_88B.csv"))
+
+```
+
+```{r, add clinical data and RoiID}
+#change ROI to Image ID
+#names(colData(sce))[names(colData(sce)) == 'ROI'] <- 'ImageID'
+head(colData(sce_88_B))
+
+ac_clinical <- left_join(ac_sub, clinical.data, by="RoiID")
+
+cur_DF <- as_tibble(colData(sce_88_B)) %>% left_join(ac_clinical, by = "acID") %>% DataFrame()
+all.equal(paste(cur_DF$ImageNumber, cur_DF$CellNumber), paste(sce_88_B$ImageNumber, sce_88_B$CellNumber))
+
+colData(sce_88_B) <- cur_DF
+rownames(colData(sce_88_B)) <-sce_88_B$CellID
+```
+
+```{r, save sce with counts and clinical data to folder counts_clinical data}
+results_folder <-(file.path(wd,"lena_processed2","NSCLC_NEW","sce_objects","counts_clinical data"))
+
+saveRDS(sce_88_B,file=file.path(results_folder, paste("sce_88_B_counts_clinical-data_RAW",".rds",sep="")))
+```

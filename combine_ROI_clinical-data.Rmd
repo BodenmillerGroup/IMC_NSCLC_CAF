@@ -1,0 +1,106 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+wd <- "/mnt"
+results_folder <-(file.path(wd,"lena_processed2","NSCLC_NEW","sce_objects","clinical_data"))
+```
+
+```{r}
+ac_86A <-read.csv(file=file.path(results_folder, "ac_sub_86A.csv"))
+ac_86B <-read.csv(file=file.path(results_folder, "ac_sub_86B.csv"))
+ac_86C <-read.csv(file=file.path(results_folder, "ac_sub_86C.csv"))
+
+ac_87A <-read.csv(file=file.path(results_folder, "ac_sub_87A.csv"))
+ac_87B <-read.csv(file=file.path(results_folder, "ac_sub_87B.csv"))
+ac_87C <-read.csv(file=file.path(results_folder, "ac_sub_87C.csv"))
+
+ac_88A <-read.csv(file=file.path(results_folder, "ac_sub_88A.csv"))
+ac_88B <-read.csv(file=file.path(results_folder, "ac_sub_88B.csv"))
+ac_88C <-read.csv(file=file.path(results_folder, "ac_sub_88C.csv"))
+
+ac_175A <-read.csv(file=file.path(results_folder, "ac_sub_175A.csv"))
+ac_175B <-read.csv(file=file.path(results_folder, "ac_sub_175B.csv"))
+ac_175C <-read.csv(file=file.path(results_folder, "ac_sub_175C.csv"))
+
+ac_176A <-read.csv(file=file.path(results_folder, "ac_sub_176A.csv"))
+ac_176B <-read.csv(file=file.path(results_folder, "ac_sub_176B.csv"))
+ac_176C <-read.csv(file=file.path(results_folder, "ac_sub_176C.csv"))
+
+ac_178A <-read.csv(file=file.path(results_folder, "ac_sub_178A.csv"))
+ac_178B <-read.csv(file=file.path(results_folder, "ac_sub_178B.csv"))
+ac_178C <-read.csv(file=file.path(results_folder, "ac_sub_178C.csv"))
+ac_178C$RoiID <-paste("178_C",ac_178C$ROI_xy,sep="")
+clinical.data
+
+```
+
+```{r}
+ac_all <- rbind(ac_175A,ac_175B,ac_175C,
+                ac_176A,ac_176B,ac_176C,
+                ac_178A,ac_178B,ac_178C,
+                ac_86A,ac_86B,ac_86C,
+                ac_87A,ac_87B,ac_87C,
+                ac_88A,ac_88B,ac_88C)
+length(unique(ac_all$Tma_ac))
+ac_all$Tma_ac[duplicated(ac_all$Tma_ac)]
+ac_all$RoiID[duplicated(ac_all$RoiID)] #"88_A4,2" "88_A5,2" which had to be acquired twice
+#length(unique(all.cells.sub$Tma_ac))
+length(unique(ac_all$Tma_ac))
+length(unique(ac_all$RoiID))
+
+unique(all.cells.sub$Tma_ac) %in%ac_all$Tma_ac
+
+unique(all.cells.sub$Tma_ac)[!unique(all.cells.sub$Tma_ac)%in%ac_all$Tma_ac]
+unique(ac_all$Tma_ac)[!unique(ac_all$Tma_ac)%in%all.cells.sub$Tma_ac] #"176C_2" "86B_24" are empty acquisitions
+
+
+unique(all.cells.sub$Tma_ac)%>% length()
+unique(ac_all$Tma_ac) %>% length() #--> remove "176C_2" "86B_24" then 2072 == all.cells.sub minus 88A_1, 88A2, 88A3, 88A4
+unique(ac_all$RoiID) %>% length()
+#images 88A_1, 88A_2, 88A_3 and 88A_4 to be removed. Equas 248 cells
+ac_all$RoiID %>% unique()%>% length()
+
+ac_all <-ac_all[ac_all$Tma_ac!="176C_2"&ac_all$Tma_ac!="86B_24",]
+```
+
+```{r, read in clinical data}
+wd <-"/mnt"
+data_folder <- file.path(wd,"lena_processed","NSCLC_TMA","ImcSegmentationPipeline","analysis","LC_NSCLC_TMA_178_C",'cpinp')
+cd_folder <- file.path(wd,"lena_processed2","NSCLC_NEW","clinical_data")
+
+
+clinical.data <-read.csv(file=file.path(cd_folder, paste("clinical_data.csv")))
+clinical.data$X <-NULL
+clinical.data$TmaBlock <-NULL
+unique(clinical.data$test)
+clinical.data$test <-NULL
+```
+
+```{r merge clinical data and ac_all}
+ac_clinical <-left_join(ac_all, clinical.data, by="RoiID")
+
+ac_clinical$Patient_ID[!ac_clinical$Patient_ID %in% unique(clinical.data$Patient_ID)]
+
+ac_all$RoiID[!ac_all$RoiID %in% unique(clinical.data$RoiID)]
+
+ac_clinical$Patient_ID[is.na(ac_clinical$Patient_ID)] <-"Control"
+clinical.data$Patient_ID[is.na(clinical.data$Patient_ID)] <-"Control"
+
+length(unique(clinical.data$Patient_ID))
+
+length(unique(ac_clinical$Patient_ID))
+length(unique(ac_clinical$RoiID))
+length(unique(clinical.data$RoiID))
+
+length(unique(ac_all$RoiID))
+
+table(ac_clinical$DX.name)
+write.csv(ac_clinical, file=file.path(results_folder, "clinical_data_ROI_ac_combined_CORRECT.csv"))
+ac_clinical <-read.csv(file=file.path(results_folder, "clinical_data_ROI_ac_combined.csv"))
+
+ac_clinical$Tma_ac %>% unique() %>% length()
+```
+
